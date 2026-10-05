@@ -14,7 +14,7 @@
 <meta name="twitter:title" content="Bus Jam: Terminal Rush">
 <meta name="twitter:description" content="Sort colorful passengers into the right buses before the terminal jams! Play free!">
 <meta name="twitter:image" content="https://snake58.github.io/bus-terminal-jam/og-image.jpg">
-<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { width:100%; height:100%; overflow:hidden; background:#0b1020;
@@ -27,64 +27,11 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="vstamp">v4</div>
+<div id="vstamp">v16</div>
 <script>
-/* Portal: CrazyGames SDK v3 — https://docs.crazygames.com/
-   Reglas aplicadas: init con await antes que todo; gameplayStart con el primer
-   input (no al cargar); gameplayStop antes de pedir un ad; mute+pausa en
-   adStarted; reanudar en adFinished/adError; respetar settings.muteAudio;
-   sin botón de fullscreen propio (el juego no tiene); física con timestep
-   fijo (substeps en physStep); todo en inglés. */
-window.Portal = (function () {
-  var ready = false;
-  function platformMuted(){
-    try { return !!(window.CrazyGames && window.CrazyGames.SDK.game.settings.muteAudio); }
-    catch (e) { return false; }
-  }
-  function applyMute(){ try { Sfx.setMuted(platformMuted()); } catch (e) {} }
-  function sdk(){ return window.CrazyGames.SDK; }
-  return {
-    name: "crazygames",
-  rewarded:false,
-    boot(){
-      try {
-        sdk().init().then(function (){
-          ready = true;
-          applyMute();
-          try {
-            if (sdk().game.addSettingsChangeListener)
-              sdk().game.addSettingsChangeListener(applyMute);
-          } catch (e) {}
-        }).catch(function (){});
-      } catch (e) {}
-    },
-    gameReady(){},
-    gameplayStart(){ try { if (ready) sdk().game.gameplayStart(); } catch (e) {} },
-    gameplayStop(){ try { if (ready) sdk().game.gameplayStop(); } catch (e) {} },
-    scoreChanged(s){},
-  showRewarded(cb){ try{cb(false);}catch(e){} },
-    showInterstitial(){
-      var self = this;
-      self.gameplayStop();
-      Game.autoPause(true); Sfx.setMuted(true);
-      var done = function (){
-        Sfx.setMuted(false); applyMute(); Game.autoPause(false);
-      };
-      try {
-        if (ready) {
-          sdk().ad.requestAd("midgame", {
-            adStarted: function (){ Sfx.setMuted(true); },
-            adFinished: done,
-            adError: done
-          });
-          // Seguridad: si los callbacks nunca llegan, reanudar a los 30s
-          setTimeout(function (){ if (Game.pausedByAd) done(); }, 30000);
-        } else done();
-      } catch (e) { done(); }
-    }
-  };
-})();
-/* BUS TERMINAL BUILD v4 */
+/* Portal: none (itch.io / standalone).
+   Sin SDK: el juego corre con localStorage y sin anuncios. */
+/* BUS TERMINAL BUILD v16 */
 </script>
 <script>
 "use strict";
@@ -92,6 +39,33 @@ window.Portal = (function () {
    BUS JAM: TERMINAL RUSH — original bus-sorting puzzle.
    Sort waiting passengers into matching buses before the
    terminal overflows. Portrait, touch-first, single file.
+   v9: coin fly-to-HUD, passenger heads in bus windows,
+   low-timer warning, combo meter, hair color variety,
+   hop-when-your-bus-arrives, neon flicker, title walkers,
+   freeze snowflakes, level stats, tick SFX.
+   v10: portal-perfect pass — Playgama storage.get(key,false),
+   in-progress level save + CONTINUE on title, gameplayStart/Stop
+   dedup in adapters; game-feel: passengers shrink into the bus
+   door when boarding, speed lines on departure, periodic
+   anticipation hops, "GO!" on intro end, door swish SFX.
+   v11: bus body lean (nose-down braking on arrival, nose-up on
+   departure), pulsing gold ring + bouncing arrow on full buses.
+   v12: CONTENT — level archetypes (RUSH every 7th, RAIN every 6th,
+   SNOW every 12th; weather changes gameplay), new bus kinds
+   (LONG +3 seats, MINI quick turnaround), daily challenge (5
+   seeded levels, same for everyone each day), lightning/thunder.
+   v13: FEATURES — persistent stats (boarded, combos, full buses,
+   fastest level, streaks), 12 achievements with unlock toasts,
+   garage with 5 unlockable bus skins (neon underglow + stripes).
+   v14: AMBIENT — scrolling LED marquee on the terminal wall, flickering
+   street lamps, foreground taxi traffic, sky birds, bay status lamps,
+   3 generative music themes (night/rain/rush picked per level kind),
+   subtle SFX pitch variation.
+   v15: MASTERY — per-level records (best time + coins) with a records
+   screen, 9 new achievements (21 total), 3 new garage skins (8 total),
+   richer passenger variety (2 new hairstyles, 2 skin tones), weekly
+   daily modifiers (Tip Tuesday, Payday Friday...), first-time weather
+   onboarding cards, bigger touch targets, animated panel transitions.
    ============================================================ */
 
 /* ---------------- utils ---------------- */
@@ -114,11 +88,34 @@ const Store = window.Store = window.Store || {
    v4: generative lo-fi night music + layered SFX. Everything is
    synthesized in code — zero external audio files. Music starts on
    the first user gesture, ducks under the global mute switch, and
-   the scheduler idles while the tab is hidden. */
+   the scheduler idles while the tab is hidden.
+   v9: added tick() countdown blip.
+   v14: three generative themes (night / rain / rush) — the level kind
+   picks the soundtrack; SFX get subtle pitch variation. */
+const THEMES={
+  night:{bpm:72, // Am7 - Fmaj7 - Cmaj7 - Em7 (the original lo-fi theme)
+    chords:[[57,60,64,67],[53,57,60,65],[48,55,59,64],[52,55,59,62]],
+    bass:[33,29,36,40], penta:[69,72,74,76,79,81,84],
+    mel:[4,-1,2,-1, 3,2,-1,1, 4,-1,5,4, 2,-1,1,-1,
+         3,-1,2,-1, 4,-1,6,5, 4,3,2,-1, 1,-1,0,-1]},
+  rain:{bpm:64, // Dm9 - Bb - F - C: slower, moodier for storm levels
+    chords:[[50,53,57,60,64],[46,50,53,58],[53,57,60,65],[48,52,55,60]],
+    bass:[26,22,29,24], penta:[62,64,65,67,69,72,74],
+    mel:[4,-1,-1,-1, 2,-1,3,-1, -1,-1,4,-1, 2,-1,-1,1,
+         3,-1,-1,2, -1,4,-1,-1, 5,-1,4,2, -1,-1,1,-1]},
+  rush:{bpm:92, // E - C - G - D: driving and upbeat for rush hour
+    chords:[[52,56,59,64],[48,52,55,60],[55,59,62,67],[50,54,57,62]],
+    bass:[28,24,31,26], penta:[64,66,68,71,73,76,79],
+    mel:[4,5,4,2, 3,4,-1,2, 4,-1,5,6, 5,4,2,1,
+         3,4,5,4, 2,-1,3,2, 1,2,3,4, 5,4,2,-1]},
+};
 const Sfx = window.Sfx = {
   ctx:null, muted:false,
   _master:null, _musicBus:null, _noiseBuf:null, _delay:null,
-  _musicOn:false, _musicWanted:false, _mStep:0, _mNext:0, _mTimer:0,
+  _musicOn:false, _musicWanted:false, _mStep:0, _mNext:0, _mTimer:0, _theme:null, // v14: _theme = active generative theme
+  setTheme(name){ // v14: swap generative soundtrack per level kind
+    this._theme=THEMES[name]||THEMES.night; this._mStep=0;
+  },
   mf(m){ return 440*Math.pow(2,(m-69)/12); },   // midi -> hz
 
   ensure(){
@@ -203,19 +200,32 @@ const Sfx = window.Sfx = {
   /* ----- game SFX (layered, satisfying) ----- */
   click(){ this.tone(660,990,0.07,"triangle",0.10); this.tone(1320,1320,0.04,"sine",0.05,0.01); },
   board(){
-    // ascending pop: body sweep + bright ping + air tick
-    this.tone(420,940,0.11,"sine",0.14);
-    this.tone(840,1680,0.09,"triangle",0.07,0.02);
+    // ascending pop: body sweep + bright ping + air tick (v14: pitch varies per boarding)
+    const j=1+rnd(-0.06,0.06);
+    this.tone(420*j,940*j,0.11,"sine",0.14);
+    this.tone(840*j,1680*j,0.09,"triangle",0.07,0.02);
     this.noise(0.06,0.05,0,5200,3200,1.4);
   },
   deny(){
-    this.tone(240,150,0.16,"sawtooth",0.09);
-    this.tone(252,158,0.16,"square",0.05,0.01);
-    this.tone(120,90,0.20,"sine",0.08,0.02);
+    const j=1+rnd(-0.04,0.04);   // v14: variation
+    this.tone(240*j,150*j,0.16,"sawtooth",0.09);
+    this.tone(252*j,158*j,0.16,"square",0.05,0.01);
+    this.tone(120*j,90*j,0.20,"sine",0.08,0.02);
+  },
+  tick(){
+    // v9: countdown blip when a bus timer is about to expire
+    this.tone(1250,1250,0.055,"square",0.05);
+    this.tone(1875,1875,0.04,"sine",0.03,0.02);
+  },
+  door(){ // v10: soft air swish as a passenger dives through the bus door
+    try{ this.noise(0.16,0.09,0,1400,500,1.4); }catch(e){}
+  },
+  go(){ // v10: bright two-tone "GO!" when the level starts
+    this.tone(523,523,0.09,"square",0.07); this.tone(784,784,0.16,"square",0.07,0.09);
   },
   coin(n){
-    // ding; pitch climbs with the combo streak
-    const k=1+Math.min(Math.max(n||0,0),24)*0.024, f=1318*k;
+    // ding; pitch climbs with the combo streak (v14: + tiny random sparkle)
+    const k=(1+Math.min(Math.max(n||0,0),24)*0.024)*(1+rnd(-0.015,0.015)), f=1318*k;
     this.tone(f,f,0.10,"triangle",0.10);
     this.tone(f*2,f*2,0.16,"sine",0.06,0.015);
     this.tone(f*1.5,f*1.5,0.08,"sine",0.03,0.03);
@@ -247,10 +257,19 @@ const Sfx = window.Sfx = {
     ch.forEach((f,i)=>{ this.tone(f,f*1.003,0.50,"sawtooth",0.045,i*0.03); this.tone(f*2,f*2,0.40,"triangle",0.03,i*0.03); });
     [880,1174,1568].forEach((f,i)=>this.tone(f,f,0.12,"sine",0.06,0.12+i*0.06));
   },
+  ach(){
+    // v13: achievement unlocked fanfare — quick rising arpeggio
+    [523.3,659.3,784,1046.5].forEach((f,i)=>this.tone(f,f,0.12,"triangle",0.09,i*0.07));
+    this.tone(2093,2093,0.2,"sine",0.04,0.28);
+  },
   freeze(){
     this.tone(1800,500,0.45,"sine",0.08);
     this.tone(2400,900,0.40,"triangle",0.05,0.05);
     this.noise(0.40,0.05,0,7000,2500,1.5);
+  },
+  thunder(){ // v12: distant rumble for rain levels
+    this.noise(1.4,0.14,0,120,60,0.6);
+    this.thump(0.14,0.15);
   },
   win(){
     const n=[523.3,659.3,784,1046.5];
@@ -320,25 +339,93 @@ const Sfx = window.Sfx = {
   _sched(){
     if(!this._musicOn||this.muted||!this.ctx) return;
     if(typeof document!=="undefined"&&document.hidden){ this._mNext=this.ctx.currentTime+0.15; return; }
-    const SPB=60/72/2; // 8th notes @72bpm
+    const T=this._theme||THEMES.night;   // v14: theme picked per level kind
+    const SPB=60/T.bpm/2; // 8th notes at the theme's tempo
     if(this._mNext<this.ctx.currentTime-0.5) this._mNext=this.ctx.currentTime+0.1;
-    // Am7 - Fmaj7 - Cmaj7 - Em7, one bar (8 steps) each
-    const CH=[[57,60,64,67],[53,57,60,65],[48,55,59,64],[52,55,59,62]];
-    const BASS=[33,29,36,40];
-    const PENTA=[69,72,74,76,79,81,84]; // A minor pentatonic
-    // 32-step melody: scale degrees into PENTA, -1 = rest
-    const MEL=[4,-1,2,-1, 3,2,-1,1, 4,-1,5,4, 2,-1,1,-1,
-               3,-1,2,-1, 4,-1,6,5, 4,3,2,-1, 1,-1,0,-1];
     while(this._mNext<this.ctx.currentTime+0.45){
       const s=this._mStep, bar=(s>>3)%4, st=s%8, t=this._mNext+Math.random()*0.02;
-      if(st===0) this._pad(CH[bar],t);
-      if(st===0||st===4||st===6) this._bass(BASS[bar],t);
-      const dg=MEL[s%32];
-      if(dg>=0&&(st%2===0||Math.random()<0.35)) this._pluck(PENTA[dg],t,0.055+Math.random()*0.035);
+      if(st===0) this._pad(T.chords[bar],t);
+      if(st===0||st===4||st===6) this._bass(T.bass[bar],t);
+      const dg=T.mel[s%32];
+      if(dg>=0&&(st%2===0||Math.random()<0.35)) this._pluck(T.penta[dg],t,0.055+Math.random()*0.035);
       this._mNext+=SPB; this._mStep++;
     }
   },
 };
+
+/* ---------------- persistent stats (v13) ---------------- */
+const Stats = {
+  data:{pax:0,bestCombo:0,full:0,disp:0,played:0,fastest:0,fastestN:0,streak:0,earned:0,
+        dailyWins:0,rushWins:0,recs:null},   // v15: recs = per-level {t:ms,c:coins}
+  load(){
+    return Store.get("stats").then(v=>{
+      try{ const d=JSON.parse(v||"{}");
+        for(const k in this.data){ if(k==="recs") continue; if(d[k]!=null) this.data[k]=+d[k]||0; }
+        if(d.recs&&typeof d.recs==="object") this.data.recs=d.recs;
+      }catch(e){}
+    });
+  },
+  save(){ try{ Store.set("stats", JSON.stringify(this.data)); }catch(e){} },
+  bump(k,n){ this.data[k]=(this.data[k]||0)+(n||1); this.save(); },
+  rec(key,dt,coins){   // v15: per-level records — returns {t,c} flags for new records
+    this.data.recs=this.data.recs||{};
+    const old=this.data.recs[key]||{}, r={t:false,c:false};
+    if(!old.t||dt<old.t){ old.t=dt; r.t=true; }
+    if(!old.c||coins>old.c){ old.c=coins; r.c=true; }
+    this.data.recs[key]=old;
+    const ks=Object.keys(this.data.recs);          // prune to the newest 40
+    if(ks.length>40){ ks.sort(); for(let i=0;i<ks.length-40;i++) delete this.data.recs[ks[i]]; }
+    this.save(); return r;
+  },
+};
+/* ---------------- achievements (v13) ---------------- */
+const ACH=[
+  {id:"lv1",   name:"First Dispatch",  desc:"Complete level 1"},
+  {id:"combo8",name:"Combo x8",        desc:"Reach a x8 combo"},
+  {id:"combo16",name:"Combo x16",      desc:"Reach a x16 combo"},
+  {id:"full5", name:"Full House",      desc:"Dispatch 5 full buses"},
+  {id:"pax250",name:"Crowd Mover",     desc:"Board 250 passengers"},
+  {id:"daily1",name:"Daily Grind",     desc:"Finish a daily challenge"},
+  {id:"rain",  name:"Rain Dancer",     desc:"Complete a rain level"},
+  {id:"snow",  name:"Snowplow",        desc:"Complete a snow level"},
+  {id:"rush",  name:"Rush Hour Hero",  desc:"Complete a rush level"},
+  {id:"rich",  name:"Tycoon",          desc:"Hold $500 at once"},
+  {id:"streak5",name:"Smooth Operator",desc:"5 levels without jamming"},
+  {id:"skin",  name:"Fresh Paint",     desc:"Buy a bus skin"},
+  {id:"streak15",name:"Hot Streak",    desc:"15 levels without jamming"},   // v15
+  {id:"combo24",name:"Combo x24",      desc:"Reach a x24 combo"},            // v15
+  {id:"full10",name:"Packed House",    desc:"Dispatch 10 full buses"},      // v15
+  {id:"pax1000",name:"City Legend",    desc:"Board 1,000 passengers"},      // v15
+  {id:"rich2", name:"High Roller",     desc:"Hold $2,000 at once"},         // v15
+  {id:"daily3",name:"Regular Commuter",desc:"Finish 3 daily challenges"},   // v15
+  {id:"dailyperfect",name:"Flawless Day",desc:"Daily 5/5 with zero jams"},  // v15
+  {id:"garageall",name:"Full Garage",  desc:"Own every bus skin"},         // v15
+  {id:"rush10",name:"Rush Veteran",    desc:"Complete 10 rush levels"},    // v15
+];
+const Ach = {
+  got:{},
+  load(){ return Store.get("ach").then(v=>{ try{ const a=JSON.parse(v||"[]"); a.forEach(id=>this.got[id]=1); }catch(e){} }); },
+  has(id){ return !!this.got[id]; },
+  unlock(id){
+    if(this.got[id]) return false;
+    this.got[id]=1;
+    try{ Store.set("ach", JSON.stringify(Object.keys(this.got))); }catch(e){}
+    const a=ACH.find(x=>x.id===id);
+    if(a){ Game.achToast=a.name; Game.achToastT=2600; Sfx.ach(); }
+    return true;
+  },
+};
+/* ---------------- bus skins / garage (v13) ---------------- */
+const SKINS=[
+  {id:0,name:"CLASSIC", cost:0,   glow:null,      stripe:null},
+  {id:1,name:"NEON",    cost:150, glow:"#22d3ee", stripe:"#22d3ee"},
+  {id:2,name:"GOLD",    cost:400, glow:"#fbbf24", stripe:"#fbbf24"},
+  {id:3,name:"MIDNIGHT",cost:700, glow:"#a855f7", stripe:"#c084fc"},
+  {id:4,name:"INFERNO", cost:1200,glow:"#ef4444", stripe:"#f87171"},
+  {id:5,name:"SUNSET",  cost:1800,glow:"#fb7185", stripe:"#f97316"},   // v15
+  {id:6,name:"TIDE",    cost:2800,glow:"#2dd4bf", stripe:"#0ea5e9"},   // v15
+  {id:7,name:"STARDUST",cost:4200,glow:"#fde047", stripe:"#e879f9"},   // v15
+];
 
 /* ---------------- palette ---------------- */
 const COLORS=[
@@ -348,7 +435,8 @@ const COLORS=[
   {name:"yellow", main:"#eab308", dark:"#854d0e", light:"#fde047", shape:"star"},
   {name:"purple", main:"#a855f7", dark:"#6b21a8", light:"#c084fc", shape:"diamond"},
 ];
-const SKIN=["#ffd9b3","#f1c27d","#e0ac69","#c68642","#8d5524"];
+const SKIN=["#ffd9b3","#f1c27d","#e0ac69","#c68642","#8d5524","#a06a42","#6b4226"]; // v15: 2 more tones
+const HAIRCOL=["#4a3226","#1f2937","#b45309","#92400e","#6b7280"]; // v9: hair color variety
 
 /* ---------------- sprite layers need the font early (used at load by buildSprites) ---------------- */
 const SYSFONT="-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,Roboto,sans-serif";
@@ -494,8 +582,8 @@ function busSprite(ci){
   s={img:L.img,w:W2,h:H2,ox:ox,oy:oy};
   Sprites.bus[ci]=s; return s;
 }
-function paxSprite(ci,skin,blink){
-  const key=ci+"|"+skin+"|"+(blink?1:0);
+function paxSprite(ci,skin,blink,hair,hcol){
+  const key=ci+"|"+skin+"|"+(blink?1:0)+"|"+(hair||0)+"|"+(hcol||"#4a3226");
   let s=Sprites.pax[key];
   if(s) return s;
   const col=COLORS[ci], W2=64, H2=100, ox=32, oy=64;
@@ -509,6 +597,42 @@ function paxSprite(ci,skin,blink){
   const hg=c.createRadialGradient(-6,-48,4,0,-40,20);
   hg.addColorStop(0,shade(skin,1.07)); hg.addColorStop(1,skin);
   c.fillStyle=hg; c.beginPath(); c.arc(0,-40,19,0,7); c.fill();
+  // hair variants (baked): 0 = swoop, 1 = driver cap, 2 = spiky, 3 = ponytail, 4 = beanie
+  const hv=hair||0, hc=hcol||"#4a3226";
+  if(hv===0){
+    c.fillStyle=hc;
+    c.beginPath(); c.ellipse(0,-53,18,9,0,Math.PI,0); c.fill();
+    c.beginPath(); c.ellipse(-14,-46,6,9,0.25,0,7); c.fill();
+    c.beginPath(); c.ellipse(14,-46,6,9,-0.25,0,7); c.fill();
+  }else if(hv===1){
+    c.fillStyle=col.main;
+    c.beginPath(); c.ellipse(0,-53,19,10,0,Math.PI,0); c.fill();
+    c.fillStyle=col.dark; rr(c,-25,-57,50,7,3); c.fill();
+    c.fillStyle=shade(col.main,1.35); c.beginPath(); c.arc(0,-61,3.4,0,7); c.fill();
+    drawShapeIcon(c,col.shape,0,-53,9,"rgba(255,255,255,0.85)");
+  }else if(hv===2){
+    c.fillStyle=hc;
+    for(let s2=0;s2<5;s2++){
+      const a=-Math.PI*0.86+s2*(Math.PI*0.72/4);
+      c.beginPath();
+      c.moveTo(Math.cos(a-0.17)*16,-40+Math.sin(a-0.17)*16);
+      c.lineTo(Math.cos(a)*27,-40+Math.sin(a)*27);
+      c.lineTo(Math.cos(a+0.17)*16,-40+Math.sin(a+0.17)*16);
+      c.closePath(); c.fill();
+    }
+  }else if(hv===3){   // v15: ponytail
+    c.fillStyle=hc;
+    c.beginPath(); c.ellipse(0,-53,18,9,0,Math.PI,0); c.fill();
+    c.beginPath(); c.ellipse(19,-44,6,13,0.5,0,7); c.fill();
+    c.fillStyle=col.main; c.beginPath(); c.arc(17,-52,3.6,0,7); c.fill();
+  }else{             // v15: beanie
+    c.fillStyle=col.dark;
+    c.beginPath(); c.ellipse(0,-52,19,11,0,Math.PI,0); c.fill();
+    c.fillStyle=col.main; rr(c,-20,-58,40,8,4); c.fill();
+    c.fillStyle=shade(col.main,1.4); c.beginPath(); c.arc(0,-62,4.5,0,7); c.fill();
+    c.strokeStyle=shade(col.dark,0.8); c.lineWidth=2;
+    for(let b2=-2;b2<=2;b2++){ c.beginPath(); c.moveTo(b2*7,-60); c.lineTo(b2*7,-54); c.stroke(); }
+  }
   // shiny eyes, baked (blink variant squashes them exactly like the dynamic version did)
   const bk=blink?0.15:1;
   for(const ex of [-7,7]){
@@ -566,6 +690,71 @@ function cloudSprite(){
   c.beginPath(); c.ellipse(60,40,30,7,0,0,7); c.fill();
   s={img:L.img,w:W2,h:H2}; Sprites.cloud=s; return s;
 }
+function carSprite(){
+  // v14: little taxi that crosses the foreground road
+  let s=Sprites.car; if(s) return s;
+  const W2=132,H2=48,L=makeLayer(W2,H2),c=L.g;
+  let g=c.createLinearGradient(0,0,0,30);
+  g.addColorStop(0,"#fbbf24"); g.addColorStop(1,"#b45309");
+  c.fillStyle=g; rr(c,4,10,124,26,10); c.fill();
+  c.fillStyle="#1e3a5f"; rr(c,42,14,48,13,5); c.fill();
+  c.fillStyle="rgba(255,255,255,0.35)"; rr(c,46,15,18,6,3); c.fill();
+  c.fillStyle="#111827"; rr(c,58,3,16,8,2); c.fill();
+  c.fillStyle="#fde047"; c.font=font(800,6); c.textAlign="center"; c.textBaseline="middle"; c.fillText("TAXI",66,7);
+  [32,100].forEach(wx=>{ c.fillStyle="#111827"; c.beginPath(); c.arc(wx,38,10,0,7); c.fill();
+    c.fillStyle="#6b7280"; c.beginPath(); c.arc(wx,38,4,0,7); c.fill(); });
+  c.fillStyle="#fef9c3"; c.beginPath(); c.arc(126,26,5,0,7); c.fill();
+  c.fillStyle="#ef4444"; c.beginPath(); c.arc(6,26,5,0,7); c.fill();
+  s={img:L.img,w:W2,h:H2}; Sprites.car=s; return s;
+}
+function drawMarquee(){
+  // v14: scrolling LED board on the terminal wall
+  const mx=100,my=158,mw=280,mh=30;
+  ctx.fillStyle="#0b1226"; rr(ctx,mx,my,mw,mh,8); ctx.fill();
+  ctx.strokeStyle="rgba(255,209,102,0.45)"; ctx.lineWidth=2; rr(ctx,mx,my,mw,mh,8); ctx.stroke();
+  ctx.save(); rr(ctx,mx,my,mw,mh,8); ctx.clip();
+  ctx.fillStyle="#ffd166"; ctx.font=font(800,17); ctx.textAlign="left"; ctx.textBaseline="middle";
+  const txt="\u2605 TERMINAL RUSH \u2605 COFFEE 24H \u2605 FREE WIFI \u2605 MIND THE GAP ";
+  const w=ctx.measureText(txt).width, off=(Game.time/28)%w;
+  for(let ox=mx-off;ox<mx+mw;ox+=w) ctx.fillText(txt,ox,my+mh/2+1);
+  if(Math.sin(Game.time/700)>0.985){ ctx.fillStyle="rgba(11,18,38,0.85)"; ctx.fillRect(mx,my,mw,mh); } // LED flicker
+  ctx.restore();
+}
+function drawLamps(){
+  // v14: street lamps flanking the queue, warm flickering glow
+  for(const lx of [30,450]){
+    ctx.strokeStyle="#1e293b"; ctx.lineWidth=6; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(lx,430); ctx.lineTo(lx,308); ctx.stroke();
+    const fl=clamp(0.78+0.22*Math.sin(Game.time/130+lx*2)+0.05*Math.sin(Game.time/31+lx),0.5,1);
+    const gl=glowDot("#ffd98a",14);   // compact warm halo (r=14 → 56px sprite)
+    ctx.save(); ctx.globalAlpha=0.6*fl; ctx.drawImage(gl.img,lx-28,308-28); ctx.restore();
+    ctx.fillStyle="#ffd98a"; rr(ctx,lx-7,296,14,12,4); ctx.fill();
+    ctx.fillStyle="#1e293b"; rr(ctx,lx-10,290,20,6,3); ctx.fill();
+  }
+}
+function drawBirds(){
+  // v14: distant birds drifting across the sky
+  ctx.strokeStyle="rgba(20,30,55,0.75)"; ctx.lineWidth=2; ctx.lineCap="round";
+  for(const b of Game.birds){
+    const f=Math.sin(Game.time/90+b.ph)*4;
+    ctx.beginPath();
+    ctx.moveTo(b.x-8,b.y+f); ctx.quadraticCurveTo(b.x-3,b.y-3,b.x,b.y);
+    ctx.quadraticCurveTo(b.x+3,b.y-3,b.x+8,b.y+f); ctx.stroke();
+  }
+}
+function drawTraffic(){
+  // v14: taxi crossing the foreground road (drawn before the HUD bar so the UI stays clean)
+  const t=Game.traf, c=carSprite(), ty=700;   // ty=700: clears the booster bar, passes before bay 3
+  ctx.save();
+  if(t.dir<0){ ctx.translate(t.x+c.w,ty); ctx.scale(-1,1); ctx.drawImage(c.img,0,0); }
+  else{
+    ctx.drawImage(c.img,t.x,ty);
+    const gl=glowDot("#fef9c3",20); // headlight throw
+    ctx.save(); ctx.globalCompositeOperation="lighter"; ctx.globalAlpha=0.5;
+    ctx.drawImage(gl.img,t.x+c.w-6,ty+8); ctx.restore();
+  }
+  ctx.restore();
+}
 function coinSprite(){
   let s=Sprites.coin;
   if(s) return s;
@@ -592,7 +781,7 @@ function buildSprites(dpr){
   const s=canvas.width/LW; // device px per logical px
   Sprites.devS=s;
   Sprites.sky=null; Sprites.ground=null; Sprites.vig=null; Sprites.coin=null;
-  Sprites.shadow=null; Sprites.cloud=null;
+  Sprites.shadow=null; Sprites.cloud=null; Sprites.car=null;   // v14: car
   Sprites.bus={}; Sprites.pax={}; Sprites.glow={}; Sprites.ui={};
   let L=makeLayerDev(canvas.width, Math.round(300*s));
   L.g.setTransform(s,0,0,s,0,0);
@@ -688,6 +877,8 @@ function vignette(){
 </script>
 <script>
 "use strict";
+/* CrazyGames: señal explícita de inicio de carga (el QA puede medir hasta loadingStop) */
+try{ if(window.Portal&&Portal.loadingStart) Portal.loadingStart(); }catch(e){}
 /* ================= GAME LOGIC ================= */
 
 /* ================= CONFIG ================= */
@@ -696,8 +887,55 @@ const BUS_W=440, BUS_H=58;
 const ENTR={x:60,y:262};            // terminal entrance (walk-in origin)
 const JAM_LIMIT=10000;
 
-function levelParams(n){
-  return {
+/* === LEVEL_MODEL_START ===
+   v12: level archetypes + daily challenge. This block is pure logic (no DOM):
+   devtools/verify-levels.js extracts it to validate solvability of every level.
+   Kinds: "rush" (every 7th level: faster spawns, bigger buses, +2 dispatches),
+   "rain"/"snow" (every 6th/12th: weather that changes gameplay, not just looks).
+   Daily challenge = 5 deterministic levels from the calendar date (same for
+   everyone that day); spawn randomness stays live, only the level set is fixed. */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function dailySeed(){ var d=new Date(); return d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate(); }
+function levelKind(n,opts){
+  if(opts&&opts.kind) return opts.kind;
+  if(n%12===0) return "snow";
+  if(n%6===0) return "rain";
+  if(n%7===0) return "rush";
+  return "clear";
+}
+const KIND_LABEL={
+  clear:"", rush:"\u26A1 RUSH HOUR",
+  rain:"\u2614 RAIN", snow:"\u2744 SNOW",
+};
+const KIND_DESC={
+  clear:"",
+  rush:"Faster crowds, BIGGER buses, +2 dispatches!",
+  rain:"Passengers walk slower. Drive safe!",
+  snow:"Buses park slower and leave sooner!",
+};
+const KIND_ICON={rush:"\u26A1",rain:"\u2614",snow:"\u2744"};   // v15
+const KIND_TIP={   // v15: first-time weather onboarding tips
+  rush:"Tip: crowds arrive in waves — board fast!",
+  rain:"Tip: board early — walkers are slow!",
+  snow:"Tip: dispatch quickly — buses leave early!",
+};
+/* v15: weekly daily modifiers — one twist per weekday, same for everyone.
+   Pure logic (no DOM / no Game refs) so devtools/verify-levels.js can run it. */
+function dailyModifier(){
+  var d=new Date().getDay();
+  return [
+    {icon:"\u2600\uFE0F",name:"CHILL SUNDAY",   desc:"Buses wait 30% longer",            coinMul:1,   spawnMul:1,   timerMul:1.3},
+    {icon:"\u26A1",      name:"MANIC MONDAY",   desc:"Spawns 20% faster, +25% coins",    coinMul:1.25,spawnMul:0.8, timerMul:1},
+    {icon:"\uD83D\uDCB0",name:"TIP TUESDAY",    desc:"All coin bonuses x1.5",            coinMul:1.5, spawnMul:1,   timerMul:1},
+    {icon:"\uD83C\uDF2A\uFE0F",name:"WILD WEDNESDAY",desc:"+1 passenger color",          coinMul:1,   spawnMul:1,   timerMul:1, colorsUp:1},
+    {icon:"\uD83D\uDE8C",name:"TURBO THURSDAY", desc:"Buses +1 seat, 10% faster spawns", coinMul:1,   spawnMul:0.9, timerMul:1, capUp:1},
+    {icon:"\uD83C\uDF89",name:"PAYDAY FRIDAY",  desc:"All coin bonuses DOUBLED",         coinMul:2,   spawnMul:1,   timerMul:1},
+    {icon:"\uD83C\uDF0A",name:"SURGE SATURDAY", desc:"Spawns 15% faster, +25% coins",    coinMul:1.25,spawnMul:0.85,timerMul:1},
+  ][d];
+}
+function levelParams(n,opts){
+  var kind=levelKind(n,opts);
+  var p={
     colors: Math.min(2+Math.floor((n-1)/2),5),
     slots: n<3?9:12,
     busCap: Math.max(4, 7-Math.floor(n/3)),
@@ -705,8 +943,48 @@ function levelParams(n){
     spawnMs: Math.max(1500, 2700-n*150),
     busTimer: Math.max(22000, 40000-n*2000),
     decoy: Math.min(0.35, 0.08+n*0.03),
+    kind: kind, weather: (kind==="rain"||kind==="snow")?kind:null,
+    walkMul: 1, arriveMul: 1,
   };
+  if(kind==="rush"){                       // rush hour: chaos, but bigger buses help
+    p.spawnMs=Math.round(p.spawnMs*0.8);
+    p.busTimer=Math.round(p.busTimer*0.85);
+    p.target+=2; p.busCap+=1;
+  }else if(kind==="rain"){                  // rain: soaked passengers drag their feet
+    p.walkMul=1.45;
+    p.spawnMs=Math.round(p.spawnMs*0.9);
+  }else if(kind==="snow"){                  // snow: buses slide in slowly, depart early
+    p.busTimer=Math.round(p.busTimer*0.85);
+    p.arriveMul=1.6;
+  }
+  return p;
 }
+/* bus kinds: std (66%), long (12%: +3 seats, lingers), mini (22%: small, quick) */
+function busKindRoll(r){
+  r=(r==null)?Math.random():r;
+  if(r<0.12) return "long";
+  if(r<0.34) return "mini";
+  return "std";
+}
+function busKindStats(kind,base){
+  if(kind==="long") return {cap:base.cap+3, timerMul:1.2, arriveMul:1};
+  if(kind==="mini") return {cap:Math.max(3,base.cap-2), timerMul:0.75, arriveMul:0.8};
+  return {cap:base.cap, timerMul:1, arriveMul:1};
+}
+function dailyLevelParams(i){
+  var rng=mulberry32(dailySeed()*7+i*131);
+  var kinds=["clear","rain","rush","snow","clear"];
+  var p=levelParams(3+i*2,{kind:kinds[i%5]});
+  var m=dailyModifier();   // v15: weekday twist
+  p.colors=Math.min(5,2+Math.floor(rng()*3)+(m.colorsUp||0));
+  p.target=5+Math.floor(rng()*4);             // 5..8
+  p.spawnMs=Math.round(p.spawnMs*(0.95+rng()*0.15)*(m.spawnMul||1));
+  p.busTimer=Math.round(p.busTimer*(0.9+rng()*0.2)*(m.timerMul||1));
+  if(m.capUp) p.busCap+=m.capUp;
+  p.decoy=Math.min(0.3, 0.08+p.colors*0.03);
+  return p;
+}
+/* === LEVEL_MODEL_END === */
 function slotPos(i,slots){
   const cols = slots===9?3:4, col=i%cols, row=Math.floor(i/cols);
   const x0 = cols===3?130:75;
@@ -719,14 +997,23 @@ const Game = window.Game = {
   state:"title", pausedByAd:false,
   level:1, coins:0, best:0, totalDispatched:0,
   passengers:[], buses:[], parts:[], floats:[],
-  slotTaken:{}, spawnT:0, jamT:0, freezeT:0,
+  slotTaken:{}, spawnT:0, jamT:0, freezeT:0, antiT:0,   // v10: antiT = anticipation hop timer
   combo:0, dispatched:0, target:6, levelCoins:0,
+  fullCount:0, maxCombo:0,   // v9: level stats
   shake:0, banner:"", bannerT:0, introT:0,
   slowmo:0, fade:0,   // juice: brief slow-mo + soft state fade (render-only)
   tutStep:0, seenTut:false, muted:false,
-  params:levelParams(1), time:0, clouds:[],
+  params:levelParams(1), time:0, clouds:[], motes:[],
   bayRespawn:[0,0,0], rushQ:[], lastAd:0,
-  overStats:null,
+  overStats:null, saveLevel:0,   // v10: in-progress level save
+  birds:[], traf:null, _birdT:0,   // v14: ambient life — birds + foreground taxi traffic
+  mode:"run", dailyIdx:0, dailyTotal:0, dailyBest:0, dailyStamp:0, // v12: daily challenge
+  dailyMod:null, dailyJams:0, coinMul:1,  // v15: daily modifier + coin multiplier
+  seenKind:{}, kindFresh:false,    // v15: first-time weather onboarding
+  ovT:0, panelT:0,                // v15: overlay/panel transition timers
+  weather:null, levelLabel:"LEVEL 1",
+  skin:0, skinsOwned:[0], overlay:null, // v13: garage + title overlays
+  achToast:"", achToastT:0, levelStartT:0,   // v13: achievement toast + speedrun timer
 
   autoPause(on){
     if(on && this.state==="play"){ this.pausedByAd=true; this.setState("pause"); }
@@ -734,31 +1021,74 @@ const Game = window.Game = {
   },
   setState(s){
     this.state=s;
-    if(s==="intro"||s==="levelcomplete"||s==="gameover") this.fade=380; // soft transition overlay
+    if(s==="intro"||s==="levelcomplete"||s==="gameover"||s==="dailycomplete") this.fade=380; // soft transition overlay
     try{
       if(s==="play") Portal.gameplayStart(); else Portal.gameplayStop();
     }catch(e){}
   },
 
   /* ---------- flow ---------- */
-  newGame(){ this.startLevel(1); },
-  startLevel(n){
-    this.level=n; this.params=levelParams(n);
+  newGame(){ this.mode="run"; this.startLevel(1); },
+  startDaily(){  // v12: 5 fixed levels, same for everyone today
+    this.mode="daily"; this.dailyIdx=0; this.dailyTotal=0; this.dailyStamp=dailySeed();
+    this.dailyMod=dailyModifier();                    // v15: weekday twist
+    this.coinMul=this.dailyMod.coinMul||1;            // v15: coin bonus multiplier
+    this.dailyJams=0;                                 // v15: flawless-day tracking
+    this.dailyParams=[0,1,2,3,4].map(i=>dailyLevelParams(i));
+    this.startLevel(1, this.dailyParams[0]);
+  },
+  nextLevel(){  // v12: routes run vs daily progression
+    if(this.mode==="daily"){
+      this.dailyIdx++;
+      if(this.dailyIdx>=this.dailyParams.length){ this.dailyDone(); return; }
+      this.startLevel(this.dailyIdx+1, this.dailyParams[this.dailyIdx]);
+    }else this.startLevel(this.level+1);
+  },
+  retryLevel(){  // v12: game-over retry restarts the CURRENT level (incl. daily)
+    if(this.mode==="daily") this.startLevel(this.dailyIdx+1, this.dailyParams[this.dailyIdx]);
+    else this.startLevel(this.level);
+  },
+  dailyDone(){   // v12: daily challenge complete — 5/5 levels
+    const tot=this.dailyTotal;
+    if(tot>this.dailyBest){ this.dailyBest=tot; Store.set("dailybest_"+this.dailyStamp,tot); }
+    Stats.data.dailyWins=(Stats.data.dailyWins||0)+1; Stats.save();   // v15
+    Ach.unlock("daily1");   // v13
+    if(Stats.data.dailyWins>=3) Ach.unlock("daily3");          // v15
+    if(this.dailyJams===0) Ach.unlock("dailyperfect");        // v15
+    this.panelT=this.time;                                    // v15: panel pop
+    this.setState("dailycomplete");
+    Sfx.win();
+    this.confetti(240,300); this.confetti(120,360); this.confetti(360,360);
+    for(let i=0;i<12;i++) this.sparkle(rnd(80,400),rnd(180,320),"#fde047");
+  },
+  startLevel(n, paramsOverride){
+    this.level=n; this.params=paramsOverride||levelParams(n);
+    this.weather=this.params.weather;
+    this.levelLabel=this.mode==="daily"?("DAY "+(this.dailyIdx+1)+"/5"):("LEVEL "+n);
     this.passengers=[]; this.buses=[]; this.parts=[]; this.floats=[];
     this.slotTaken={}; this.rushQ=[];
     this.combo=0; this.dispatched=0; this.target=this.params.target;
     this.levelCoins=0; this.jamT=0; this.freezeT=0; this.spawnT=1200; this.shake=0;
-    this.tutStep = (!this.seenTut && n===1)?0:2;
+    this.fullCount=0; this.maxCombo=0;   // v9: level stats
+    if(this.mode==="run"){ this.saveLevel=n; try{ Store.set("saveLevel",n); }catch(e){} }  // v10: in-progress save (run mode only)
+    this.tutStep = (!this.seenTut && n===1 && this.mode==="run")?0:2;
     for(let i=0;i<3;i++){ this.buses.push(null); this.bayRespawn[i]=600+i*450; }
     for(let k=0;k<6;k++) this.spawnT0(k*220, k);
-    this.introT=1500; this.banner="LEVEL "+n; this.bannerT=1500;
+    this.introT=1500; this.banner=this.levelLabel; this.bannerT=1500;
+    const kd=this.params.kind;   // v15: first-time weather onboarding
+    this.kindFresh=kd!=="clear"&&!this.seenKind[kd];
+    if(this.kindFresh){ this.seenKind[kd]=1; try{ Store.set("seenKind_"+kd,"1"); }catch(e){} this.introT=2600; }
+    if(this.mode!=="daily") this.coinMul=1;   // v15: daily coin boost only in daily mode
+    this.levelStartT=Date.now();   // v13: fastest-level tracking
+    try{ Sfx.setTheme(this.params.kind==="rain"?"rain":this.params.kind==="rush"?"rush":"night"); }catch(e){}  // v14
     this.setState("intro");
     try{ Portal.gameplayStart(); }catch(e){}
   },
   // staggered initial spawns (called pre-play so queue is filling during intro)
   spawnT0(delay,k){
     const p={id:PID++, st:"wait", wait:delay, slot:-1, color:rndi(0,this.params.colors-1),
-      x:ENTR.x, y:ENTR.y, t:0, dur:600, wob:rnd(0,6.28), skin:pick(SKIN), denyT:0, bus:null};
+      x:ENTR.x, y:ENTR.y, t:0, dur:600*this.params.walkMul, wob:rnd(0,6.28), skin:pick(SKIN), hair:rndi(0,4),
+      hcol:pick(HAIRCOL), denyT:0, birthT:0, hopT:0, bus:null};
     this.passengers.push(p);
   },
 
@@ -775,7 +1105,8 @@ const Game = window.Game = {
     this.passengers.push({id:PID++, st:"in", slot:s,
       color: force&&force.color!=null?force.color:rndi(0,this.params.colors-1),
       x:ENTR.x, y:ENTR.y, sx:ENTR.x, sy:ENTR.y, tx:sp.x, ty:sp.y,
-      t:0, dur:650, wob:rnd(0,6.28), skin:pick(SKIN), denyT:0, bus:null});
+      t:0, dur:650*this.params.walkMul, wob:rnd(0,6.28), skin:pick(SKIN), hair:rndi(0,4), hcol:pick(HAIRCOL),
+      denyT:0, birthT:0, hopT:0, bus:null});
     return true;
   },
 
@@ -789,9 +1120,14 @@ const Game = window.Game = {
       if(keys.length && Math.random()>this.params.decoy) color=+pick(keys);
       else color=rndi(0,this.params.colors-1);
     }
-    const b={id:BID++, bay, color, cap:this.params.busCap, aboard:0, reserved:0,
-      timer:this.params.busTimer, maxTimer:this.params.busTimer,
-      x:560, state:"arriving", t:0, dur:fast?600:1300, wob:0, denyT:0, celeb:0, full:false};
+    // v12: bus kinds — long (+3 seats, lingers), mini (small, quick turnaround)
+    const kind=busKindRoll();
+    const ks=busKindStats(kind,{cap:this.params.busCap});
+    const b={id:BID++, bay, color, kind, cap:ks.cap, aboard:0, reserved:0,
+      timer:this.params.busTimer*ks.timerMul, maxTimer:this.params.busTimer*ks.timerMul,
+      x:560, state:"arriving", t:0, dur:(fast?600:1300)*(this.params.arriveMul||1)*ks.arriveMul,
+      wob:0, denyT:0, celeb:0, full:false,
+      _tickSec:null};   // v9: low-timer countdown beep tracking
     this.buses[bay]=b;
     Sfx.arrive();
     return b;
@@ -817,18 +1153,30 @@ const Game = window.Game = {
   },
   arriveBus(p,bus){
     bus.reserved=Math.max(0,(bus.reserved||0)-1);
-    bus.aboard++; bus.wob=1;
+    bus.aboard++; bus.wob=1; bus.doorT=260; // visual: door flash on boarding
     this.coins++; this.levelCoins++;
+    Stats.bump("pax"); Stats.bump("earned");   // v13
     this.combo++;
-    Sfx.board(); Sfx.coin(this.combo);
+    if(this.combo>this.maxCombo) this.maxCombo=this.combo;   // v9: level stats
+    if(this.combo>Stats.data.bestCombo){ Stats.data.bestCombo=this.combo; Stats.save(); }  // v13
+    if(this.combo>=8) Ach.unlock("combo8");    // v13
+    if(this.combo>=16) Ach.unlock("combo16");  // v13
+    if(this.combo>=24) Ach.unlock("combo24");  // v15
+    if(Stats.data.pax>=250) Ach.unlock("pax250");  // v13
+    if(Stats.data.pax>=1000) Ach.unlock("pax1000");  // v15
+    if(this.coins>=500) Ach.unlock("rich");     // v13
+    if(this.coins>=2000) Ach.unlock("rich2");   // v15
+    Sfx.board(); Sfx.door(); Sfx.coin(this.combo);   // v10: door swish on entry
     this.sparkle(bus.x+BUS_W-46, BAY_Y[bus.bay]-10, COLORS[bus.color].main);
-    this.floater(bus.x+BUS_W-60, BAY_Y[bus.bay]-52, "+1", "#fde047", 16);
+    this.flyCoins(bus.x+BUS_W-60, BAY_Y[bus.bay]-52, 1);   // v9: coin flies to the HUD counter
     this.removePassenger(p);
     try{ Portal.scoreChanged(this.coins); }catch(e){}
     if(this.combo>0 && this.combo%8===0){
-      const bonus=5;
+      const bonus=Math.round(5*(this.coinMul||1));   // v15: daily coin boost
       this.coins+=bonus; this.levelCoins+=bonus;
+      Stats.bump("earned",bonus);   // v13
       this.floater(240,300,"COMBO x"+this.combo+"  +$"+bonus+"!","#fde047",22);
+      this.flyCoins(240,300,4);   // v9: bonus coins fly too
       Sfx.combo(this.combo);
     }
     if((bus.aboard+bus.reserved)>=bus.cap && bus.state==="parked" && !bus.celeb){
@@ -853,12 +1201,16 @@ const Game = window.Game = {
   },
   depart(b,full){
     if(b.state!=="play"&&b.state!=="parked") return;
-    b.state="departing"; b.t=0; b.dur=950; b.full=!!full;
+    b.state="departing"; b.t=0; b.dur=950; b.full=!!full; b.beamT=450; // visual: headlight beam flash
+    if(b.aboard>=b.cap){ this.fullCount++; Stats.bump("full"); }   // v9: level stats; v13: persistent
     Sfx.depart();
     for(let k=0;k<10;k++) this.dust(b.x+rnd(0,BUS_W), BAY_Y[b.bay]+30);
     if(full){
-      const bonus=5+b.cap*2;
+      const bonus=Math.round((5+b.cap*2)*(this.coinMul||1));   // v15: daily coin boost
       this.coins+=bonus; this.levelCoins+=bonus;
+      Stats.bump("earned",bonus);   // v13
+      if(Stats.data.full>=5) Ach.unlock("full5");   // v13
+      if(Stats.data.full>=10) Ach.unlock("full10"); // v15
       this.confetti(240,420);
       this.floater(240,380,"FULL BUS! +$"+bonus,"#4ade80",22);
       Sfx.fullBus();
@@ -866,23 +1218,48 @@ const Game = window.Game = {
       this.slowmo=240;                     // brief slow-mo: juicy, logic-safe (dt is scaled)
     }
     this.dispatched++; this.totalDispatched++;
+    Stats.bump("disp");   // v13
     try{ Portal.scoreChanged(this.coins); }catch(e){}
     if(this.dispatched>=this.target){ this.levelComplete(); }
     else { this.banner="BUS "+this.dispatched+"/"+this.target; this.bannerT=900; }
   },
 
   levelComplete(){
-    const bonus=10+this.level*2;
+    const bonus=Math.round((10+this.level*2)*(this.coinMul||1));   // v15: daily coin boost
     this.coins+=bonus; this.levelCoins+=bonus;
-    if(this.level>this.best){ this.best=this.level; Store.set("best",this.best); }
+    Stats.bump("earned",bonus); Stats.bump("played");   // v13
+    Stats.data.streak=(Stats.data.streak||0)+1;         // v13: jam-free streak
+    const dt=Date.now()-this.levelStartT;               // v13: fastest level
+    if(!Stats.data.fastest||dt<Stats.data.fastest){ Stats.data.fastest=dt;
+      Stats.data.fastestN=this.mode==="daily"?("DAY "+(this.dailyIdx+1)):("LV "+this.level); }  // v16: label daily fastest as DAY n
+    const rkey=this.mode==="daily"?("D"+(this.dailyIdx+1)):("L"+this.level);  // v15
+    const nr=Stats.rec(rkey,dt,this.levelCoins);                              // v15: per-level records
+    if(this.params.kind==="rush"){ Stats.data.rushWins=(Stats.data.rushWins||0)+1; }  // v15
+    Stats.save();
+    if(this.mode==="run"&&this.level===1) Ach.unlock("lv1");   // v13
+    if(this.params.kind==="rain") Ach.unlock("rain");          // v13
+    if(this.params.kind==="snow") Ach.unlock("snow");          // v13
+    if(this.params.kind==="rush"){ Ach.unlock("rush"); if(Stats.data.rushWins>=10) Ach.unlock("rush10"); }  // v13+v15
+    if(Stats.data.streak>=5) Ach.unlock("streak5");            // v13
+    if(Stats.data.streak>=15) Ach.unlock("streak15");          // v15
+    if(nr.t||nr.c) this.floater(240,340,"NEW RECORD!","#fde047",24);  // v15
+    if(this.mode==="run"&&this.level>this.best){ this.best=this.level; Store.set("best",this.best); }
+    if(this.mode==="daily") this.dailyTotal+=this.levelCoins;   // v12: accumulate daily score
     Store.set("coins",this.coins);
+    this.panelT=this.time;   // v15: panel pop animation
     this.setState("levelcomplete");
     Sfx.win();
+    // celebration: confetti volleys + golden sparkles (visual only)
+    this.confetti(240,300); this.confetti(120,360); this.confetti(360,360);
+    for(let i=0;i<12;i++) this.sparkle(rnd(80,400),rnd(180,320),"#fde047");
     const now=Date.now();
     if(now-this.lastAd>180000){ this.lastAd=now; try{ Portal.showInterstitial(); }catch(e){} }
   },
   gameOver(){
     this.overStats={level:this.level, coins:this.levelCoins, best:this.best};
+    Stats.data.streak=0; Stats.save();   // v13: jam breaks the streak
+    if(this.mode==="daily") this.dailyJams++;   // v15: flawless-day tracking
+    this.panelT=this.time;   // v15: panel pop animation
     this.setState("gameover");
     Sfx.lose();
     try{ Portal.showInterstitial(); }catch(e){}
@@ -937,6 +1314,12 @@ const Game = window.Game = {
   dust(x,y){ this.parts.push({x,y,vx:rnd(-40,40),vy:rnd(-60,-10),life:rnd(400,800),t:0,col:"rgba(180,170,160,0.7)",r:rnd(4,8),g:300}); },
   confetti(x,y){ for(let i=0;i<40;i++) this.parts.push({x:x+rnd(-40,40),y,vx:rnd(-160,160),vy:rnd(-320,-60),life:rnd(800,1600),t:0,col:pick(COLORS).main,r:rnd(3,6),g:700,rect:1}); },
   miniBurst(x,y,col){ for(let i=0;i<14;i++) this.parts.push({x:x+rnd(-24,24),y,vx:rnd(-120,120),vy:rnd(-220,-40),life:rnd(500,900),t:0,col:pick([col,"#ffffff","#fde047"]),r:rnd(2,4),g:600,rect:Math.random()<0.5?1:0}); },
+  flyCoins(x,y,n){
+    // v9: coins arc up and fly to the HUD counter (satisfying "collect" feedback)
+    for(let i=0;i<(n||1);i++)
+      this.parts.push({fly:1,x0:x+rnd(-8,8),y0:y,x1:132,y1:32,vx:0,vy:0,t:-i*80,dur:620,life:620,
+                       peak:rnd(50,110),r:10,g:0,col:"#fbbf24"});
+  },
   floater(x,y,txt,col,size){ this.floats.push({x,y,txt,col:col||"#fff",size:size||16,t:0,life:1100}); },
 
   /* ---------- tick ---------- */
@@ -946,16 +1329,69 @@ const Game = window.Game = {
     if(this.clouds.length<5 && Math.random()<dt/4000) this.clouds.push({x:520,y:rnd(30,120),s:rnd(0.6,1.3),v:rnd(8,20)});
     this.clouds.forEach(c=>c.x-=c.v*dt/1000);
     this.clouds=this.clouds.filter(c=>c.x>-120);
+    // ambient dust motes drifting over the terminal (render-only)
+    if(this.motes.length<14 && Math.random()<dt/800)
+      this.motes.push({x:rnd(10,470),y:rnd(560,300),s:rnd(0.5,1.4),vx:rnd(-8,8),vy:rnd(-16,-6),a:rnd(0.10,0.30),tw:rnd(0,6.28)});
+    for(const m of this.motes){
+      m.x+=m.vx*dt/1000; m.y+=m.vy*dt/1000; m.tw+=dt/900;
+      if(m.y<250){ m.y=580; m.x=rnd(10,470); }
+      if(m.x<0) m.x=470; else if(m.x>480) m.x=10;
+    }
+    // v9: snowflakes drift down while FREEZE is active
+    if(this.freezeT>0 && this.parts.length<220 && Math.random()<dt/220)
+      this.parts.push({x:rnd(20,460),y:rnd(560,620),vx:rnd(-20,20),vy:rnd(30,70),
+        life:rnd(900,1600),t:0,col:"#e0f2fe",r:rnd(2,4),g:60});
+    // v12: weather — rain streaks / snow squalls over the whole terminal
+    if(this.weather==="rain" && (this.state==="play"||this.state==="intro") && this.parts.length<300 && Math.random()<dt/40)
+      this.parts.push({rain:1,x:rnd(-20,500),y:-10,vx:-180,vy:900,life:900,t:0,col:"rgba(147,197,253,0.55)",r:2,g:0});
+    if(this.weather==="snow" && (this.state==="play"||this.state==="intro") && this.parts.length<300 && Math.random()<dt/60)
+      this.parts.push({x:rnd(-20,500),y:-10,vx:rnd(-40,40),vy:rnd(60,140),
+        life:rnd(2400,4200),t:0,col:"rgba(224,242,254,0.85)",r:rnd(2,4),g:40});
+    // v12: lightning during rain — flash + low rumble
+    if(this.lightT>0) this.lightT-=dt;
+    if(this.weather==="rain"&&(this.state==="play"||this.state==="intro")){
+      if(!this._boltT||this._boltT<=0) this._boltT=rnd(7000,15000);
+      else{ this._boltT-=dt; if(this._boltT<=0){ this.lightT=240; Sfx.thunder(); } }
+    }
     if(this.shake>0) this.shake=Math.max(0,this.shake-dt);
     if(this.fade>0) this.fade=Math.max(0,this.fade-dt);
     if(this.bannerT>0){ this.bannerT-=dt; if(this.bannerT<=0) this.banner=""; }
+    if(this.achToastT>0) this.achToastT-=dt;   // v13: achievement toast timer
+    // v14: ambient life — birds drift across the sky, a taxi crosses the foreground road
+    this._birdT-=dt;
+    if(this._birdT<=0){ this._birdT=rnd(6000,14000); this.birds.push({x:-30,y:rnd(50,170),v:rnd(50,110),ph:rnd(0,6)}); }
+    for(const bd of this.birds) bd.x+=bd.v*dt/1000;
+    this.birds=this.birds.filter(bd=>bd.x<520);
+    if(!this.traf&&Math.random()<dt/9000) this.traf={x:-150,dir:1,v:rnd(120,200)};
+    else if(this.traf){
+      this.traf.x+=this.traf.dir*this.traf.v*dt/1000;
+      if(this.traf.x>640) this.traf=Math.random()<0.5?{x:640,dir:-1,v:rnd(120,200)}:null;
+      else if(this.traf.x<-150) this.traf=null;
+    }
     this.floats.forEach(f=>{f.t+=dt; f.y-=34*dt/1000;});
     this.floats=this.floats.filter(f=>f.t<f.life);
-    this.parts.forEach(p=>{ p.t+=dt; p.vy+=p.g*dt/1000; p.x+=p.vx*dt/1000; p.y+=p.vy*dt/1000; });
+    this.parts.forEach(p=>{
+      p.t+=dt; p.vy+=p.g*dt/1000; p.x+=p.vx*dt/1000; p.y+=p.vy*dt/1000;
+      if(p.fly&&!p._popped&&p.t>=p.life){ p._popped=true; _coinPopT=this.time; this.sparkle(132,32,"#fde047"); }
+    });
     this.parts=this.parts.filter(p=>p.t<p.life && p.y<860);
-    if(this.state==="intro"){ this.introT-=dt; if(this.introT<=0) this.setState("play"); }
+    if(this.state==="intro"){ this.introT-=dt; if(this.introT<=0){ this.setState("play"); this.floater(240,400,"GO!","#4ade80",30); Sfx.go(); } }  // v10: GO! kickoff
     if(this.state!=="play") return;
     if(this.freezeT>0) this.freezeT-=dt;
+
+    // v10: every ~2s a queued passenger whose bus is parked hops in anticipation
+    this.antiT-=dt;
+    if(this.antiT<=0){
+      this.antiT=2200;
+      let cand=null;
+      for(const p of this.passengers){
+        if(p.st!=="q"||p.hopT>0) continue;
+        let ok=false;
+        for(const b of this.buses){ if(b&&b.state==="parked"&&b.color===p.color&&(b.aboard+b.reserved)<b.cap){ ok=true; break; } }
+        if(ok && (!cand||Math.random()<0.35)) cand=p;
+      }
+      if(cand) cand.hopT=420;
+    }
 
     // rush queue (staggered auto-board)
     for(let i=this.rushQ.length-1;i>=0;i--){
@@ -980,7 +1416,9 @@ const Game = window.Game = {
       const p=this.passengers[i];
       if(p.denyT>0) p.denyT-=dt;
       if(p.tapT>0) p.tapT-=dt; // visual-only squash timer
-      if(p.st==="wait"){ p.wait-=dt; if(p.wait<=0){ const s=this.freeSlot(); if(s>=0){ this.slotTaken[s]=1; const sp=slotPos(s,this.params.slots); p.slot=s; p.st="in"; p.sx=ENTR.x; p.sy=ENTR.y; p.tx=sp.x; p.ty=sp.y; p.t=0; } else { p.wait=400; } } }
+      if(p.birthT>0) p.birthT-=dt; // visual-only birth flash timer
+      if(p.hopT>0) p.hopT-=dt; // v9: visual-only "my bus is here!" hop
+      if(p.st==="wait"){ p.wait-=dt; if(p.wait<=0){ const s=this.freeSlot(); if(s>=0){ this.slotTaken[s]=1; const sp=slotPos(s,this.params.slots); p.slot=s; p.st="in"; p.sx=ENTR.x; p.sy=ENTR.y; p.tx=sp.x; p.ty=sp.y; p.t=0; p.birthT=340; } else { p.wait=400; } } }
       else if(p.st==="in"||p.st==="bus"){
         p.t+=dt;
         const k=clamp(p.t/p.dur,0,1), e=easeOut(k);
@@ -1005,20 +1443,36 @@ const Game = window.Game = {
       }
       if(b.denyT>0) b.denyT-=dt;
       if(b.wob>0) b.wob=Math.max(0,b.wob-dt/300);
+      if(b.parkT>0) b.parkT-=dt;   // visual-only timers
+      if(b.doorT>0) b.doorT-=dt;
+      if(b.beamT>0) b.beamT-=dt;
       if(b.state==="arriving"){
         b.t+=dt; const k=clamp(b.t/b.dur,0,1);
         b.x=lerp(560,20,easeOut(k));
-        if(k>=1){ b.state="parked"; b.x=20; }
+        b.spin=(b.spin||0)+dt*0.016;
+        if(k>=1){
+          b.state="parked"; b.x=20; b.parkT=340; b.spin=0;
+          for(let d=0;d<7;d++) this.dust(b.x+rnd(30,150), BAY_Y[b.bay]+34);
+          this.miniBurst(b.x+BUS_W-46, BAY_Y[b.bay]-22, COLORS[b.color].light);
+          Sfx.thump(0.10);
+          // v9: matching passengers hop with joy when their bus arrives
+          for(const q of this.passengers) if(q.st==="q"&&q.color===b.color) q.hopT=420;
+        }
       }else if(b.state==="departing"){
         b.t+=dt; const k=clamp(b.t/b.dur,0,1);
         b.x=lerp(20,600,easeIn(k));
-        if(k>=1){ this.buses[i]=null; this.bayRespawn[i]=1300; }
+        b.spin=(b.spin||0)+dt*0.024;
+        if(Math.random()<dt/90) this.dust(b.x+rnd(0,60), BAY_Y[b.bay]+32);
+        if(k>=1){ this.buses[i]=null; this.bayRespawn[i]=b.kind==="mini"?950:1300; }  // v12: mini buses turn around faster
       }else if(b.state==="parked"){
         if(b.celeb>0){
           if(b.reserved<=0){ b.celeb-=dt; if(b.celeb<=0){ this.depart(b,true); continue; } }
         }else{
           if(this.freezeT<=0){
             b.timer-=dt;
+            // v9: countdown beep in the last 5 seconds
+            const sec=Math.ceil(b.timer/1000);
+            if(b.timer<5000&&b.timer>0&&sec!==b._tickSec){ b._tickSec=sec; Sfx.tick(); }
             if(b.timer<=0 && b.reserved<=0){ this.depart(b,b.aboard>=b.cap); continue; }
           }
           if((b.aboard+b.reserved)>=b.cap && !b.celeb){ b.celeb=700; b.full=true; }
@@ -1031,7 +1485,15 @@ const Game = window.Game = {
   onTap(x,y){
     Sfx.ensure(); Sfx.gesture(); // first user gesture also starts the music
     if(this.state==="title"){
+      if(this.overlay){ this.overlayTap(x,y); return; }   // v13: overlay eats taps
       if(hit(x,y,this.uiPlay)){ Sfx.click(); this.newGame(); return; }
+      if(hit(x,y,this.uiDaily)){ Sfx.click(); this.startDaily(); return; }   // v12: daily challenge
+      if(hit(x,y,this.uiStats)){ Sfx.click(); this.overlay="stats"; this.ovT=this.time; return; }   // v13
+      if(hit(x,y,this.uiMedals)){ Sfx.click(); this.overlay="medals"; this.ovT=this.time; return; } // v13
+      if(hit(x,y,this.uiGarage)){ Sfx.click(); this.overlay="garage"; this.ovT=this.time; return; } // v13
+      if(hit(x,y,this.uiRecords)){ Sfx.click(); this.overlay="records"; this.ovT=this.time; return; } // v15
+      if(hit(x,y,this.uiContinue)){ Sfx.click(); this.mode="run"; this.startLevel(this.saveLevel>1?this.saveLevel:1); return; }  // v10: resume
+      if(hit(x,y,this.uiNew)){ Sfx.click(); this.newGame(); return; }
       if(hit(x,y,this.uiMute)){ this.toggleMute(); return; }
       return;
     }
@@ -1067,14 +1529,19 @@ const Game = window.Game = {
       return;
     }
     if(this.state==="levelcomplete"){
-      if(hit(x,y,this.uiNext)){ Sfx.click(); this.startLevel(this.level+1); }
+      if(hit(x,y,this.uiNext)){ Sfx.click(); this.nextLevel(); }   // v12: routes run vs daily
       else if(hit(x,y,this.uiDouble)&&window.Portal&&Portal.rewarded){
-        try{ Portal.showRewarded(ok=>{ if(ok){ this.coins+=this.levelCoins; Store.set("coins",this.coins); this.floater(240,400,"DOUBLED!","#fde047",22); Sfx.win(); } }); }catch(e){}
+        try{ Portal.showRewarded(ok=>{ if(ok){ this.coins+=this.levelCoins; Stats.bump("earned",this.levelCoins); Store.set("coins",this.coins); this.floater(240,400,"DOUBLED!","#fde047",22); Sfx.win(); } }); }catch(e){}
       }
       return;
     }
+    if(this.state==="dailycomplete"){  // v12: daily challenge finished
+      if(hit(x,y,this.uiMenu2)){ Sfx.click(); this.setState("title"); }
+      else if(hit(x,y,this.uiDailyAgain)){ Sfx.click(); this.startDaily(); }
+      return;
+    }
     if(this.state==="gameover"){
-      if(hit(x,y,this.uiRetry)){ Sfx.click(); this.startLevel(this.level); }
+      if(hit(x,y,this.uiRetry)){ Sfx.click(); this.retryLevel(); }   // v12: retry current level (incl. daily)
       else if(hit(x,y,this.uiMenu2)){ Sfx.click(); this.setState("title"); }
       else if(hit(x,y,this.uiRevive)&&window.Portal&&Portal.rewarded){
         try{ Portal.showRewarded(ok=>{ if(ok) this.revive(); }); }catch(e){}
@@ -1084,10 +1551,35 @@ const Game = window.Game = {
   },
   toggleMute(){ this.muted=!this.muted; Sfx.setMuted(this.muted); },
 
+  /* ---------- v13: title overlays (stats / achievements / garage) ---------- */
+  overlayTap(x,y){
+    if(hit(x,y,this.uiOvClose)){ Sfx.click(); this.overlay=null; return; }
+    if(this.overlay==="garage"){
+      for(let i=0;i<SKINS.length;i++){
+        const r=this.uiGarageRow[i];
+        if(r&&hit(x,y,r)){ this.garageTap(i); return; }
+      }
+    }
+  },
+  garageTap(i){
+    const sk=SKINS[i];
+    if(this.skinsOwned.indexOf(i)>=0){ this.skin=i; Store.set("skin",i); Sfx.click(); }
+    else if(this.coins>=sk.cost){
+      this.coins-=sk.cost; Store.set("coins",this.coins);
+      this.skinsOwned.push(i); this.skin=i;
+      Store.set("skins",this.skinsOwned.join(",")); Store.set("skin",i);
+      Sfx.win(); Ach.unlock("skin");
+      if(this.skinsOwned.length>=SKINS.length) Ach.unlock("garageall");   // v15
+    }else Sfx.deny();
+  },
+
   // UI rects (filled by renderer each frame)
   uiPlay:null, uiMute:null, uiPause:null, uiBoost:[null,null,null],
   uiResume:null, uiRestart:null, uiMenu:null,
   uiNext:null, uiDouble:null, uiRetry:null, uiMenu2:null, uiRevive:null,
+  uiContinue:null, uiNew:null,   // v10: title continue / new-game buttons
+  uiDaily:null, uiDailyAgain:null,   // v12: daily challenge buttons
+  uiStats:null, uiMedals:null, uiGarage:null, uiRecords:null, uiOvClose:null, uiGarageRow:[],  // v13: overlays; v15: records
 };
 function hit(x,y,r){ return r&&x>=r.x&&y>=r.y&&x<=r.x+r.w&&y<=r.y+r.h; }
 
@@ -1121,18 +1613,22 @@ function draw(){
   ctx.save();
   if(Game.shake>0) ctx.translate(rnd(-1,1)*Game.shake/60, rnd(-1,1)*Game.shake/60);
   drawBackground();
-  if(Game.state==="title"){ drawTitleDemo(); drawTitle(); }
+  if(Game.state==="title"){ drawTitleDemo(); drawTitle(); if(Game.overlay) drawOverlay(); }   // v13: overlays
   else{
-    drawBays(); drawEntrance();
+    drawBays(); drawEntrance(); drawMotes();
+    drawLamps();   // v14: street lamps flanking the queue
+    if(Game.weather) drawWeather();   // v12: rain/snow tint over the terminal
     // passengers sorted by y (reused scratch array: no per-frame allocation)
     _psort.length=0;
     for(let i=0;i<Game.passengers.length;i++) _psort.push(Game.passengers[i]);
     _psort.sort(_byY);
     for(let i=0;i<_psort.length;i++) drawPassenger(_psort[i]);
     Game.buses.forEach(b=>{ if(b) drawBus(b); });
+    if(Game.traf) drawTraffic();   // v14: taxi (drawn before HUD so the bar stays clean)
     drawParts(); drawFloats();
     drawHUD(); drawBoosters();
-    if(Game.jamT>0) drawJam();
+    drawAchToast();   // v13: achievement toast
+    if(Game.jamT>0){ drawJam(); drawJamEdge(); }
     if(Game.freezeT>0) drawFreezeFx();
     if(Game.banner) drawBanner();
     if(Game.tutStep<2&&(Game.state==="play")) drawTut();
@@ -1140,6 +1636,7 @@ function draw(){
     if(Game.state==="pause") drawPause();
     if(Game.state==="levelcomplete") drawLevelComplete();
     if(Game.state==="gameover") drawGameOver();
+    if(Game.state==="dailycomplete") drawDailyComplete();   // v12
   }
   ctx.restore();
   // soft fade overlay between major states (title->game->win/lose): zero-alloc
@@ -1169,6 +1666,15 @@ function drawBackground(){
   ctx.save(); ctx.setTransform(1,0,0,1,0,0);
   if(Sprites.ground) ctx.drawImage(Sprites.ground,0,Sprites.groundY||0);
   ctx.restore();
+  // v9: neon sign hum — subtle flicker over the "BUS TERMINAL" sign
+  const fl=0.05+0.035*Math.sin(Game.time/700)+((Math.sin(Game.time/167)+Math.sin(Game.time/89)>1.75)?-0.07:0);
+  if(fl>0.012){
+    ctx.save(); ctx.globalCompositeOperation="lighter"; ctx.globalAlpha=fl;
+    ctx.fillStyle="#ffd98a"; ctx.fillRect(120,196,240,34);
+    ctx.restore();
+  }
+  drawMarquee();   // v14: scrolling LED board on the terminal wall
+  drawBirds();     // v14: distant birds
 }
 function drawEntrance(){
   const pl=26+Math.sin(Game.time/300)*4;
@@ -1188,34 +1694,55 @@ function drawBays(){
     rr(ctx,10,y-40,BUS_W+20,80,12); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle="#ffe9b0"; ctx.font=font(800,14); ctx.textAlign="left"; ctx.textBaseline="middle";
     spaced(1.5); ctx.fillText("BAY "+(i+1),18,y-48); unspaced();
+    // v14: bay status lamp — green parked / blinking amber arriving / dark empty
+    const _bb=Game.buses[i];
+    let _lc="#334155";
+    if(_bb&&_bb.state==="parked") _lc="#4ade80";
+    else if(_bb&&_bb.state==="arriving") _lc=(Math.sin(Game.time/150)>0)?"#fbbf24":"#78350f";
+    ctx.fillStyle=_lc; ctx.beginPath(); ctx.arc(446,y-40,6,0,7); ctx.fill();
+    ctx.strokeStyle="rgba(0,0,0,0.4)"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(446,y-40,6,0,7); ctx.stroke();
   }
 }
 
 function drawPassenger(p){
   const moving=(p.st==="in"||p.st==="bus");
   const bob=moving?Math.abs(Math.sin(Game.time/28+p.wob))*5:Math.sin(Game.time/350+p.wob)*2;
+  const hop=(p.hopT>0)?-Math.sin(Math.PI*clamp(p.hopT/420,0,1))*14:0; // v9: "my bus is here!" hop
   const dx=p.denyT>0?Math.sin(Game.time/28)*6:0;
-  const x=p.x+dx, y=p.y;
-  // idle squash & stretch + tap squash
+  const x=p.x+dx, y=p.y, yb=p.y+hop; // shadow stays on the ground, body hops
+  // idle squash & stretch + tap squash + birth pop
   let sx=1, sy=1;
   if(p.tapT>0){ const k=p.tapT/200; sx=1+0.28*k; sy=1-0.26*k; }
   else { const b=Math.sin(Game.time/350+p.wob); sy=1+b*0.025; sx=1-b*0.025; }
+  if(p.birthT>0){ const bk=clamp(1-p.birthT/340,0,1), bs=0.55+0.45*easeOutBack(bk); sx*=bs; sy*=bs; }
+  if(p.st==="bus"){ // v10: dive into the bus door — shrink away at the end of the walk
+    const bk=clamp(p.t/p.dur,0,1);
+    if(bk>0.78){ const d=1-(bk-0.78)/0.22*0.78; sx*=d; sy*=d; }
+  }
   const sh=shadowSprite();
   ctx.drawImage(sh.img, x-20, y+24, 40, 12);
+  if(p.birthT>0){
+    // additive birth flash
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=0.65*clamp(p.birthT/340,0,1);
+    const bf=glowDot("#ffe9b0",26);
+    ctx.drawImage(bf.img,x-bf.w/2,y-10-bf.h/2,bf.w,bf.h);
+    ctx.restore();
+  }
   ctx.save();
-  ctx.translate(x,y+30); ctx.scale(sx,sy); ctx.translate(-x,-(y+30));
+  ctx.translate(x,yb+30); ctx.scale(sx,sy); ctx.translate(-x,-(yb+30));
   const by=bob*0.4;
   // feet (walk cycle, under the body like before)
   if(moving){
     ctx.fillStyle="#2b3a55";
     const f=Math.sin(Game.time/28+p.wob)*6;
-    rr(ctx,x-14+f,y+20,13,10,5); ctx.fill();
-    rr(ctx,x+1-f,y+20,13,10,5); ctx.fill();
+    rr(ctx,x-14+f,yb+20,13,10,5); ctx.fill();
+    rr(ctx,x+1-f,yb+20,13,10,5); ctx.fill();
   }
-  // cached body+head+eyes sprite (painted once per color+skin+blink at DPR)
+  // cached body+head+eyes sprite (painted once per color+skin+blink+hair+haircol at DPR)
   const blink=(Math.sin(Game.time/900+p.wob*3)>0.985)?1:0;
-  const s=paxSprite(p.color,p.skin,blink);
-  ctx.drawImage(s.img, x-s.ox, y-s.oy+by, s.w, s.h);
+  const s=paxSprite(p.color,p.skin,blink,p.hair||0,p.hcol||"#4a3226");
+  ctx.drawImage(s.img, x-s.ox, yb-s.oy+by, s.w, s.h);
   ctx.restore();
   if(p.denyT>0){
     ctx.fillStyle="#f87171"; ctx.font=font(800,22); ctx.textAlign="center"; ctx.textBaseline="middle";
@@ -1226,26 +1753,147 @@ function drawBus(b){
   const col=COLORS[b.color];
   const x=b.x, y=BAY_Y[b.bay];
   const wob=b.wob>0?Math.sin(b.wob*22)*4*b.wob:0;
-  const dx=b.denyT>0?Math.sin(Game.time/28)*5:0;
+  // v9: low-timer warning — the bus shudders when it is about to leave
+  const lowT=(b.state==="parked"&&b.timer<5000&&b.timer>0&&Game.freezeT<=0);
+  const dx=(b.denyT>0?Math.sin(Game.time/28)*5:0)+(lowT?Math.sin(Game.time/55)*2.5:0);
+  const idle=(b.state==="parked")?Math.sin(Game.time/70+((b.id||0)%7)*1.7)*1.6:0; // engine-on vibration
   const celeb=b.celeb>0?1+Math.sin(b.celeb/60)*0.03:1;
+  const park=b.parkT>0?1+0.10*Math.sin(Math.PI*clamp(b.parkT/340,0,1)):1; // arrival park pop
+  const sc=celeb*park;
   ctx.save();
-  ctx.translate(x+dx, y+wob);
-  ctx.scale(celeb,celeb);
+  ctx.translate(x+dx, y+wob+idle);
+  ctx.scale(sc,sc);
+  // v11: body lean — nose-down while braking into the bay, nose-up launching on departure
+  let lean=0;
+  if(b.state==="arriving"){ const ak=clamp(b.t/b.dur,0,1); lean=0.022*(1-ak); }
+  else if(b.state==="departing"){ const dk0=clamp(b.t/b.dur,0,1); lean=-0.035*(1-dk0*dk0); }
+  if(lean!==0){ ctx.translate(BUS_W/2,34); ctx.rotate(lean); ctx.translate(-BUS_W/2,-34); }
   const sh=shadowSprite();
   ctx.drawImage(sh.img, 4, 24, BUS_W-8, 20);
   // cached glossy body (painted once per color at DPR)
   const s=busSprite(b.color);
   ctx.drawImage(s.img,-s.ox,-s.oy,s.w,s.h);
+  // v12: roof stripe marks LONG (gold) and MINI (silver) buses
+  if(b.kind==="long"){ ctx.fillStyle="#fde68a"; rr(ctx,66,0,268,8,4); ctx.fill(); }
+  else if(b.kind==="mini"){ ctx.fillStyle="#cbd5e1"; rr(ctx,140,0,120,8,4); ctx.fill(); }
+  // v13: garage skin — neon side stripe on the skirt + underglow
+  const _sk=SKINS[Game.skin]||SKINS[0];
+  if(_sk.stripe){ ctx.fillStyle=_sk.stripe; rr(ctx,10,41,BUS_W-20,5,2); ctx.fill(); }
+  if(_sk.glow&&!b.demo){
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=0.30+0.12*Math.sin(Game.time/300+((b.id||0)%7));
+    const _ug=ctx.createRadialGradient(BUS_W/2,58,4,BUS_W/2,58,BUS_W/2);
+    _ug.addColorStop(0,_sk.glow); _ug.addColorStop(1,"rgba(0,0,0,0)");
+    ctx.fillStyle=_ug;
+    ctx.beginPath(); ctx.ellipse(BUS_W/2,58,BUS_W/2,13,0,0,7); ctx.fill();
+    ctx.restore();
+  }
+  if(b.state==="departing"){
+    // v10: speed streaks streaming across the bus body as it pulls away
+    const dk=clamp(b.t/b.dur,0,1);
+    ctx.save();
+    for(let sl=0;sl<3;sl++){
+      const ly=-2+sl*22;
+      const sx0=BUS_W-70-dk*170-sl*46;
+      ctx.globalAlpha=0.45;
+      ctx.fillStyle="#ffffff";
+      rr(ctx,sx0,ly,58-dk*18,4,2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  const moving=(b.state==="arriving"||b.state==="departing");
+  if(moving){
+    // spinning wheels over the baked ones while rolling
+    for(const wx of [90,BUS_W-90]){
+      ctx.fillStyle="#111827"; ctx.beginPath(); ctx.arc(wx,50,15,0,7); ctx.fill();
+      ctx.save(); ctx.translate(wx,50); ctx.rotate(b.spin||0);
+      ctx.strokeStyle="#6b7280"; ctx.lineWidth=3; ctx.lineCap="round";
+      for(let sp=0;sp<5;sp++){ ctx.rotate(Math.PI*2/5); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-11); ctx.stroke(); }
+      ctx.restore();
+      ctx.fillStyle="#9ca3af"; ctx.beginPath(); ctx.arc(wx,50,5,0,7); ctx.fill();
+      ctx.fillStyle="rgba(255,255,255,0.7)"; ctx.beginPath(); ctx.arc(wx-1.5,48.5,1.6,0,7); ctx.fill();
+    }
+  }
+  if(b.state==="parked"){
+    // pulsing headlight halo: engine on
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    const pa=0.22+0.18*Math.sin(Game.time/240+((b.id||0)%7));
+    const hg2=ctx.createRadialGradient(BUS_W-6,40,1,BUS_W-6,40,30);
+    hg2.addColorStop(0,"rgba(255,251,224,"+pa.toFixed(3)+")");
+    hg2.addColorStop(1,"rgba(253,230,138,0)");
+    ctx.fillStyle=hg2; ctx.beginPath(); ctx.arc(BUS_W-6,40,30,0,7); ctx.fill();
+    ctx.restore();
+  }
+  if(b.state==="parked"&&b.aboard>=b.cap&&!b.demo){
+    // v11: pulsing gold ring on full buses — "tap me to dispatch"
+    const pk=(Math.sin(Game.time/300)+1)/2;
+    ctx.save();
+    ctx.globalAlpha=0.5+0.4*pk;
+    ctx.strokeStyle="#fde68a"; ctx.lineWidth=3+2*pk;
+    rr(ctx,-10,-16,BUS_W+20,100,20); ctx.stroke();
+    // bouncing arrow above full buses (sits in the gap below the booster bar)
+    const ay=-12-Math.abs(Math.sin(Game.time/280))*6;
+    ctx.globalAlpha=0.95;
+    ctx.fillStyle="#fde68a";
+    ctx.strokeStyle="#12233f"; ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(BUS_W/2-11,ay-12); ctx.lineTo(BUS_W/2+11,ay-12); ctx.lineTo(BUS_W/2,ay+2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  if(b.doorT>0){
+    // boarding flash at the door
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=clamp(b.doorT/260,0,1)*0.85;
+    const gd=glowDot("#ffffff",30);
+    ctx.drawImage(gd.img,BUS_W-46-gd.w/2,-6-gd.h/2,gd.w,gd.h);
+    ctx.restore();
+  }
+  if((b.state==="parked"||b.state==="departing")&&!b.demo){
+    // v9: passengers peek out of the windows — seated heads + reserved outlines
+    const seats=b.aboard, hold=b.reserved||0;
+    const n=Math.min(seats+hold,b.cap);
+    const hbob=Math.sin(Game.time/220)*1.5;
+    for(let i=0;i<n;i++){
+      const hx=n===1?200:88+i*(224/Math.max(1,n-1)), hy=27+hbob*(i%2?1:-1);
+      if(i<seats){
+        ctx.fillStyle=SKIN[(b.id+i)%SKIN.length];
+        ctx.beginPath(); ctx.arc(hx,hy,9,0,7); ctx.fill();
+        ctx.fillStyle=HAIRCOL[(b.id+i*2)%HAIRCOL.length];
+        ctx.beginPath(); ctx.arc(hx,hy-2,9,Math.PI*1.05,Math.PI*1.95); ctx.fill();
+      }else{
+        ctx.strokeStyle="rgba(255,255,255,0.75)"; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(hx,hy,9,0,7); ctx.stroke();
+      }
+    }
+  }
   // route sign: seats (dynamic)
   ctx.fillStyle=col.dark; ctx.font=font(800,15); ctx.textAlign="center"; ctx.textBaseline="middle";
   ctx.fillText(b.aboard+"/"+b.cap,46,25);
   if(b.denyT>0){ ctx.fillStyle="#f87171"; ctx.font=font(800,20); ctx.fillText("\u2715",BUS_W/2,60); }
   ctx.restore();
+  if(b.beamT>0&&b.state==="departing"){
+    // headlight beam flash on departure
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=clamp(b.beamT/450,0,1)*0.5;
+    const bx0=x+BUS_W-8, by0=y+40;
+    const bg2=ctx.createLinearGradient(bx0,0,bx0+110,0);
+    bg2.addColorStop(0,"rgba(255,250,220,0.8)"); bg2.addColorStop(1,"rgba(255,250,220,0)");
+    ctx.fillStyle=bg2;
+    ctx.beginPath(); ctx.moveTo(bx0,by0-8); ctx.lineTo(bx0+110,by0-26); ctx.lineTo(bx0+110,by0+26); ctx.lineTo(bx0,by0+8); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
   // timer bar (unscaled; hidden on title-screen demo buses)
   if(!b.demo){
+  if(lowT){ // v9: pulsing red danger glow around the expiring timer
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=0.30+0.25*Math.sin(Game.time/120);
+    ctx.fillStyle="#ef4444"; rr(ctx,x-3,y+37,BUS_W+6,14,6); ctx.fill();
+    ctx.restore();
+  }
   const f=clamp(b.timer/b.maxTimer,0,1);
   ctx.fillStyle="rgba(0,0,0,0.45)"; rr(ctx,x, y+40, BUS_W, 8, 4); ctx.fill();
-  const tc=f>0.5?"#4ade80":(f>0.25?"#facc15":"#ef4444");
+  const tc=lowT?"#ef4444":(f>0.5?"#4ade80":(f>0.25?"#facc15":"#ef4444"));
   if(f>0){
     const tg=ctx.createLinearGradient(0,y+40,0,y+48);
     tg.addColorStop(0,shade(tc,1.25)); tg.addColorStop(1,tc);
@@ -1263,6 +1911,22 @@ function drawParts(){
   ctx.globalCompositeOperation="lighter";   // additive glow pass for particles/explosions
   for(let i=0;i<Game.parts.length;i++){
     const p=Game.parts[i];
+    if(p.fly){ // v9: coin flying to the HUD counter
+      if(p.t<0) continue; // staggered launch
+      const k=clamp(p.t/p.dur,0,1), e=easeIn(k);
+      const x=lerp(p.x0,p.x1,e), y=lerp(p.y0,p.y1,e)-Math.sin(k*Math.PI)*p.peak;
+      const cs=coinSprite(), sc=0.8+0.25*Math.sin(k*Math.PI*4);
+      ctx.globalAlpha=clamp(1-k*k,0,1);
+      ctx.save(); ctx.translate(x,y); ctx.scale(sc,sc);
+      ctx.drawImage(cs.img,-cs.w/2,-cs.h/2,cs.w,cs.h);
+      ctx.restore();
+      continue;
+    }
+    if(p.rain){ // v12: rain streak — short slanted line
+      ctx.strokeStyle=p.col; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.045,p.y-p.vy*0.045); ctx.stroke();
+      continue;
+    }
     ctx.globalAlpha=clamp(1-p.t/p.life,0,1);
     if(p.rect){ ctx.fillStyle=p.col; ctx.fillRect(p.x-p.r/2,p.y-p.r/2,p.r,p.r); }
     else { const g=glowDot(p.col,p.r); ctx.drawImage(g.img,p.x-g.w/2,p.y-g.h/2,g.w,g.h); }
@@ -1330,7 +1994,8 @@ function circleBtn(x,y,r,txt,bg){
   });
   const py=pressed?y+2:y;
   ctx.drawImage(s.img,x-r-2,py-r-2,s.w,s.h);
-  return {x:x-r,y:y-r,w:r*2,h:r*2};
+  // v15: inflate hit box for fat-finger friendliness (visual size unchanged)
+  return {x:x-r-8,y:y-r-8,w:r*2+16,h:r*2+16};
 }
 
 function drawHUD(){
@@ -1343,7 +2008,7 @@ function drawHUD(){
   // level
   pill(10,12,86,40,"#274b7a");
   ctx.fillStyle="#fff"; ctx.font=font(800,19); ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillText("LV "+Game.level,53,33);
+  ctx.fillText(Game.levelLabel.replace("LEVEL ","LV "),53,33);
   // coins
   pill(106,12,150,40,"#8a5a1d");
   if(Game.coins!==_lastCoins){ _lastCoins=Game.coins; _coinPopT=Game.time; }
@@ -1357,8 +2022,27 @@ function drawHUD(){
   pill(266,12,96,40,"#1d6a3a");
   ctx.fillStyle="#fff"; ctx.font=font(800,17); ctx.textAlign="center";
   ctx.fillText("🚌 "+Game.dispatched+"/"+Game.target,314,33);
-  Game.uiPause=circleBtn(398,32,20,"II","#475569");
-  Game.uiMute=circleBtn(448,32,20,Game.muted?"✕":"♪","#475569");
+  if(Game.state==="play"&&Game.combo>0){
+    // v9: combo streak meter — progress to the next x8 +$5 bonus
+    const mx=10,my=58,mw=220,mh=26;
+    ctx.fillStyle="rgba(8,12,26,0.55)"; rr(ctx,mx,my,mw,mh,10); ctx.fill();
+    const pr=(Game.combo%8)/8, next=Game.combo+(8-(Game.combo%8));
+    if(pr>0){
+      const fg=ctx.createLinearGradient(mx,0,mx+mw,0);
+      fg.addColorStop(0,"#f59e0b"); fg.addColorStop(1,"#ef4444");
+      ctx.fillStyle=fg; rr(ctx,mx+4,my+15,(mw-8)*pr,7,3); ctx.fill();
+    }
+    ctx.fillStyle="#fff"; ctx.font=font(800,12); ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("COMBO x"+Game.combo+"   →   +$5 AT x"+next, mx+mw/2, my+9);
+  }
+  Game.uiPause=circleBtn(398,32,23,"II","#475569");   // v15: r20->23 touch target
+  Game.uiMute=circleBtn(448,32,23,Game.muted?"✕":"♪","#475569");   // v15
+  if(Game.params.kind&&Game.params.kind!=="clear"&&(Game.state==="play"||Game.state==="intro")){
+    // v15: persistent weather chip during play
+    pill(238,58,110,26,"rgba(30,58,138,0.8)");
+    ctx.fillStyle="#dbeafe"; ctx.font=font(800,13); ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText(KIND_ICON[Game.params.kind]+" "+Game.params.kind.toUpperCase(),293,72);
+  }
 }
 function drawBoosters(){
   const defs=[["CALL BUS","$40","#2563eb"],["FREEZE","$30","#0891b2"],["RUSH","$60","#db2777"]];
@@ -1379,6 +2063,42 @@ function drawBoosters(){
     if(Game.coins<Game.boosters[i].cost){ ctx.fillStyle="rgba(5,8,18,0.5)"; rr(ctx,x,y,w,h,16); ctx.fill(); }
     Game.uiBoost[i]={x,y:504,w:142,h:52};
   }
+}
+function drawMotes(){
+  // ambient dust motes drifting over the terminal (1 shared baked dot)
+  if(!Game.motes.length) return;
+  const g=glowDot("#ffd68c",14);
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  for(const m of Game.motes){
+    ctx.globalAlpha=m.a*(0.6+0.4*Math.sin(m.tw));
+    const d=14*m.s;
+    ctx.drawImage(g.img,m.x-d/2,m.y-d/2,d,d);
+  }
+  ctx.restore();
+}
+function drawWeather(){
+  // v12: weather tint + lightning flash (rain) / cold wash (snow)
+  if(Game.weather==="rain"){
+    ctx.fillStyle="rgba(30,58,138,0.16)"; ctx.fillRect(0,0,LW,LH);
+    if(Game.lightT>0){
+      ctx.fillStyle="rgba(255,255,255,"+(0.32*clamp(Game.lightT/240,0,1)).toFixed(3)+")";
+      ctx.fillRect(0,0,LW,LH);
+    }
+  }else if(Game.weather==="snow"){
+    ctx.fillStyle="rgba(148,197,255,0.10)"; ctx.fillRect(0,0,LW,LH);
+  }
+}
+function drawJamEdge(){
+  // pulsing red danger edge while the terminal is jamming
+  const a=0.30+0.28*Math.sin(Game.time/150);
+  ctx.save();
+  ctx.lineWidth=28;
+  ctx.strokeStyle="rgba(239,68,68,"+(a*0.35).toFixed(3)+")";
+  rr(ctx,10,10,LW-20,LH-20,26); ctx.stroke();
+  ctx.lineWidth=10;
+  ctx.strokeStyle="rgba(239,68,68,"+a.toFixed(3)+")";
+  rr(ctx,10,10,LW-20,LH-20,26); ctx.stroke();
+  ctx.restore();
 }
 function drawJam(){
   const f=clamp(Game.jamT/JAM_LIMIT,0,1);
@@ -1455,12 +2175,39 @@ function drawIntro(){
   ctx.textAlign="center"; ctx.textBaseline="middle";
   spaced(3);
   ctx.fillStyle="#fde047"; ctx.font=font(900,46);
-  ctx.fillText("LEVEL "+Game.level,240,340);
+  ctx.fillText(Game.levelLabel,240,318);
   unspaced();
   ctx.fillStyle="#fff"; ctx.font=font(700,20);
-  ctx.fillText("Dispatch "+Game.target+" buses!",240,392);
+  let y=370;
+  ctx.fillText("Dispatch "+Game.target+" buses!",240,y); y+=34;
+  if(Game.mode==="daily"){   // v15: weekday twist banner
+    const m=Game.dailyMod||dailyModifier();
+    ctx.fillStyle="#fbbf24"; ctx.font=font(800,19);
+    ctx.fillText(m.icon+" "+m.name,240,y); y+=26;
+    ctx.fillStyle="#e2e8f0"; ctx.font=font(500,14);
+    ctx.fillText(m.desc,240,y); y+=34;
+  }
+  const kl=KIND_LABEL[Game.params.kind];
+  if(kl){
+    if(Game.kindFresh){   // v15: first-time weather onboarding card
+      y+=4;
+      ctx.fillStyle="rgba(23,37,84,0.92)"; rr(ctx,58,y-26,364,112,18); ctx.fill();
+      ctx.lineWidth=2; ctx.strokeStyle="#60a5fa"; rr(ctx,58,y-26,364,112,18); ctx.stroke();
+      ctx.font=font(900,19); ctx.fillStyle="#fde047";
+      ctx.fillText("\u2728 NEW: "+kl+" \u2728",240,y); y+=27;
+      ctx.font=font(500,15); ctx.fillStyle="#e2e8f0";
+      ctx.fillText(KIND_DESC[Game.params.kind],240,y); y+=23;
+      ctx.font=font(700,14); ctx.fillStyle="#93c5fd";
+      ctx.fillText(KIND_TIP[Game.params.kind],240,y); y+=42;
+    }else{
+      ctx.fillStyle="#93c5fd"; ctx.font=font(800,19);
+      ctx.fillText(kl,240,y); y+=26;
+      ctx.fillStyle="#cbd5e1"; ctx.font=font(500,15);
+      ctx.fillText(KIND_DESC[Game.params.kind],240,y); y+=34;
+    }
+  }
   ctx.font=font(500,16); ctx.fillStyle="#cbd5e1";
-  ctx.fillText(Game.params.colors+" passenger colors",240,424);
+  ctx.fillText(Game.params.colors+" passenger colors",240,y);
 }
 function drawPause(){
   dim(); panel(250,300);
@@ -1469,23 +2216,71 @@ function drawPause(){
   Game.uiResume=button(140,340,200,54,"RESUME",null,"#22c55e");
   Game.uiRestart=button(140,404,200,54,"RESTART",null,"#f59e0b");
   Game.uiMenu=button(140,468,200,54,"MENU",null,"#64748b");
-  Game.uiMute=circleBtn(240,596,24,Game.muted?"✕":"♪","#475569");
+  Game.uiMute=circleBtn(240,596,26,Game.muted?"✕":"♪","#475569");   // v15: r24->26
 }
 function drawLevelComplete(){
-  dim(); panel(230,340);
+  dim();
+  // pulsing victory glow behind the panel
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  const ga=0.10+0.07*Math.sin(Game.time/280);
+  const gg=ctx.createRadialGradient(240,320,10,240,320,230);
+  gg.addColorStop(0,"rgba(74,222,128,"+ga.toFixed(3)+")"); gg.addColorStop(1,"rgba(74,222,128,0)");
+  ctx.fillStyle=gg; ctx.fillRect(10,90,460,460);
+  ctx.restore();
+  const _pk=panelPop(340);   // v15: panel pops in
+  ctx.save(); ctx.translate(240,410); ctx.scale(_pk,_pk); ctx.translate(-240,-410);
+  panel(230,372);
   ctx.textAlign="center"; ctx.fillStyle="#fff"; ctx.font=font(900,30); ctx.textBaseline="middle";
   spaced(1.5); ctx.fillText("LEVEL COMPLETE!",240,278); unspaced();
   ctx.fillStyle="#fde047"; ctx.font=font(800,22);
   ctx.fillText("+$"+Game.levelCoins+" coins",240,322);
   ctx.fillStyle="#cbd5e1"; ctx.font=font(500,16);
   ctx.fillText("Best level: "+Game.best,240,352);
-  Game.uiNext=button(140,380,200,56,"NEXT LEVEL",null,"#22c55e");
+  ctx.fillText("Full buses: "+Game.fullCount+"/"+Game.dispatched+"   •   Best combo: x"+Game.maxCombo,240,376); // v9: level stats
+  Game.uiNext=button(140,400,200,56,"NEXT LEVEL",null,"#22c55e");
   if(window.Portal&&Portal.rewarded)
-    Game.uiDouble=button(140,446,200,56,"DOUBLE $","watch ad","#7c3aed");
+    Game.uiDouble=button(140,466,200,56,"DOUBLE $","watch ad","#7c3aed");
   else Game.uiDouble=null;
+  ctx.restore();   // v15: end panel pop
+}
+function drawDailyComplete(){
+  // v12: daily challenge 5/5 — show total vs personal best
+  dim();
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  const ga=0.10+0.07*Math.sin(Game.time/280);
+  const gg=ctx.createRadialGradient(240,320,10,240,320,230);
+  gg.addColorStop(0,"rgba(56,189,248,"+ga.toFixed(3)+")"); gg.addColorStop(1,"rgba(56,189,248,0)");
+  ctx.fillStyle=gg; ctx.fillRect(10,90,460,460);
+  ctx.restore();
+  const _pk2=panelPop(340);   // v15: panel pops in
+  ctx.save(); ctx.translate(240,410); ctx.scale(_pk2,_pk2); ctx.translate(-240,-410);
+  panel(230,372);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#7dd3fc"; ctx.font=font(900,28);
+  spaced(1.5); ctx.fillText("DAILY COMPLETE!",240,278); unspaced();
+  ctx.fillStyle="#fde047"; ctx.font=font(800,24);
+  ctx.fillText("5/5 days • +$"+Game.dailyTotal,240,322);
+  ctx.fillStyle="#cbd5e1"; ctx.font=font(500,16);
+  ctx.fillText("Your best today: $"+Game.dailyBest,240,352);
+  const _dm2=Game.dailyMod||dailyModifier();   // v15: show today's twist
+  ctx.fillStyle="#fbbf24"; ctx.font=font(700,14);
+  ctx.fillText(_dm2.icon+" "+_dm2.name,240,376);
+  Game.uiDailyAgain=button(140,400,200,56,"RETRY",null,"#22c55e");
+  Game.uiMenu2=button(140,466,200,56,"MENU",null,"#64748b");
+  ctx.restore();   // v15: end panel pop
 }
 function drawGameOver(){
-  dim(); panel(210,380);
+  dim();
+  // pulsing jam-red glow behind the panel
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  const gr=0.10+0.07*Math.sin(Game.time/240);
+  const gj=ctx.createRadialGradient(240,330,10,240,330,230);
+  gj.addColorStop(0,"rgba(239,68,68,"+gr.toFixed(3)+")"); gj.addColorStop(1,"rgba(239,68,68,0)");
+  ctx.fillStyle=gj; ctx.fillRect(10,100,460,460);
+  ctx.restore();
+  const _pk3=panelPop(340);   // v15: panel pops in
+  ctx.save(); ctx.translate(240,420); ctx.scale(_pk3,_pk3); ctx.translate(-240,-420);
+  panel(210,380);
   ctx.textAlign="center"; ctx.fillStyle="#f87171"; ctx.font=font(900,30); ctx.textBaseline="middle";
   spaced(1.5); ctx.fillText("TERMINAL JAMMED!",240,258); unspaced();
   ctx.fillStyle="#e2e8f0"; ctx.font=font(500,18);
@@ -1496,6 +2291,136 @@ function drawGameOver(){
     Game.uiRevive=button(140,420,200,54,"CONTINUE","watch ad","#7c3aed");
   else Game.uiRevive=null;
   Game.uiMenu2=button(140,484,200,54,"MENU",null,"#64748b");
+  ctx.restore();   // v15: end panel pop
+}
+
+/* ---------- v13: title overlays ---------- */
+function fmtTime(ms){ const s=Math.round(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+/* v15: panel pop helper — scale+alpha over the first 320ms after Game.panelT */
+function panelPop(ms){
+  const k=easeOutBack(clamp((Game.time-(Game.panelT||0))/(ms||320),0,1));
+  return 0.9+0.1*k;
+}
+function drawOverlay(){
+  // v15: slide-and-fade entrance for overlays
+  const k=easeOut(clamp((Game.time-(Game.ovT||0))/260,0,1));
+  ctx.save(); ctx.globalAlpha=k; ctx.translate(0,(1-k)*26);
+  dim();
+  if(Game.overlay==="stats") drawStatsOv();
+  else if(Game.overlay==="medals") drawMedalsOv();
+  else if(Game.overlay==="garage") drawGarageOv();
+  else if(Game.overlay==="records") drawRecordsOv();   // v15
+  ctx.restore();
+}
+function drawStatsOv(){
+  panel(140,520);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#fff"; ctx.font=font(900,24); spaced(2);
+  ctx.fillText("STATISTICS",240,186); unspaced();
+  const d=Stats.data;
+  const rows=[
+    ["Passengers boarded",""+d.pax],
+    ["Best combo","x"+d.bestCombo],
+    ["Full buses",""+d.full],
+    ["Buses dispatched",""+d.disp],
+    ["Levels completed",""+d.played],
+    ["Fastest level",d.fastest?((typeof d.fastestN==="number"?("LV "+d.fastestN):d.fastestN)+" — "+fmtTime(d.fastest)):"—"],
+    ["Jam-free streak",""+d.streak],
+    ["Coins earned","$"+d.earned],
+  ];
+  rows.forEach((r,i)=>{
+    const y=232+i*36;
+    ctx.textAlign="left"; ctx.fillStyle="#94a3b8"; ctx.font=font(600,16); ctx.fillText(r[0],80,y);
+    ctx.textAlign="right"; ctx.fillStyle="#fff"; ctx.fillText(r[1],400,y);
+  });
+  Game.uiOvClose=button(140,592,200,48,"CLOSE",null,"#475569");
+}
+function drawMedalsOv(){
+  panel(90,600);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#fff"; ctx.font=font(900,24); spaced(2);
+  ctx.fillText("ACHIEVEMENTS",240,136); unspaced();
+  const un=ACH.filter(a=>Ach.has(a.id)).length;
+  ctx.fillStyle="#fde047"; ctx.font=font(700,15);
+  ctx.fillText(un+"/"+ACH.length+" unlocked",240,164);
+  // v15: two columns to fit 21 achievements
+  ACH.forEach((a,i)=>{
+    const col=i%2, row=Math.floor(i/2);
+    const bx=col===0?44:254, y=200+row*36, got=Ach.has(a.id);
+    ctx.fillStyle=got?"#fde047":"#475569";
+    ctx.beginPath(); ctx.arc(bx,y,9,0,7); ctx.fill();
+    if(got){ ctx.fillStyle="#12233f"; ctx.font=font(900,12); ctx.textAlign="center"; ctx.fillText("★",bx,y+1); }
+    ctx.textAlign="left";
+    ctx.font=font(700,12.5); ctx.fillStyle=got?"#fff":"#64748b";
+    ctx.fillText(a.name,bx+16,y-6);
+    ctx.font=font(500,10.5); ctx.fillStyle=got?"#94a3b8":"#475569";
+    const dn=a.desc.length>26?a.desc.slice(0,25)+"…":a.desc;
+    ctx.fillText(dn,bx+16,y+10);
+  });
+  Game.uiOvClose=button(140,626,200,48,"CLOSE",null,"#475569");
+}
+function drawGarageOv(){
+  // v15: 8 skins — compact rows
+  panel(96,634);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#fff"; ctx.font=font(900,24); spaced(2);
+  ctx.fillText("GARAGE",240,140); unspaced();
+  ctx.fillStyle="#fde047"; ctx.font=font(700,16);
+  ctx.fillText("$"+Game.coins+"   •   "+Game.skinsOwned.length+"/"+SKINS.length+" owned",240,168);
+  Game.uiGarageRow=[];
+  SKINS.forEach((sk,i)=>{
+    const y=204+i*56, owned=Game.skinsOwned.indexOf(sk.id)>=0, sel=Game.skin===sk.id;
+    ctx.textAlign="left"; ctx.fillStyle="#fff"; ctx.font=font(800,15);
+    ctx.fillText(sk.name,80,y-6);
+    if(sk.stripe){ ctx.fillStyle=sk.stripe; rr(ctx,80,y+6,64,9,4); ctx.fill(); }
+    else { ctx.fillStyle="#475569"; rr(ctx,80,y+6,64,9,4); ctx.fill(); }
+    let label,bg;
+    if(sel){ label="ON"; bg="#166534"; }
+    else if(owned){ label="SELECT"; bg="#2563eb"; }
+    else { label="$"+sk.cost; bg=Game.coins>=sk.cost?"#b45309":"#475569"; }
+    Game.uiGarageRow[i]=button(276,y-25,124,50,label,null,bg);   // v15: 124x50 touch target
+  });
+  Game.uiOvClose=button(140,660,200,48,"CLOSE",null,"#475569");
+}
+function drawRecordsOv(){   // v15: per-level records (best time + best coins)
+  panel(150,500);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#fff"; ctx.font=font(900,24); spaced(2);
+  ctx.fillText("LEVEL RECORDS",240,196); unspaced();
+  ctx.fillStyle="#94a3b8"; ctx.font=font(500,14);
+  ctx.fillText("your best time & coins per level",240,224);
+  const recs=Stats.data.recs||{};
+  const keys=Object.keys(recs).sort((a,b)=>{
+    const an=a[0]==="D"?1000+ +a.slice(1):+a.slice(1);
+    const bn=b[0]==="D"?1000+ +b.slice(1):+b.slice(1);
+    return bn-an;
+  }).slice(0,10);
+  ctx.font=font(700,13); ctx.fillStyle="#64748b";
+  ctx.textAlign="left"; ctx.fillText("LEVEL",110,256);
+  ctx.textAlign="right"; ctx.fillText("BEST TIME",290,256); ctx.fillText("BEST COINS",400,256);
+  if(!keys.length){
+    ctx.textAlign="center"; ctx.fillStyle="#64748b"; ctx.font=font(500,15);
+    ctx.fillText("No records yet — finish a level!",240,340);
+  }
+  keys.forEach((k,i)=>{
+    const y=290+i*32, r=recs[k];
+    const lbl=k[0]==="D"?("DAY "+k.slice(1)):("LV "+k.slice(1));
+    ctx.textAlign="left"; ctx.fillStyle="#fff"; ctx.font=font(800,15); ctx.fillText(lbl,110,y);
+    ctx.textAlign="right"; ctx.fillStyle="#7dd3fc"; ctx.font=font(700,15);
+    ctx.fillText(fmtTime(r.t||0),290,y);
+    ctx.fillStyle="#fde047"; ctx.fillText("$"+(r.c||0),400,y);
+  });
+  Game.uiOvClose=button(140,596,200,48,"CLOSE",null,"#475569");
+}
+function drawAchToast(){
+  // v13: "achievement unlocked" toast during gameplay
+  if(Game.achToastT<=0||!Game.achToast) return;
+  ctx.save();
+  ctx.globalAlpha=clamp(Math.min(1,Game.achToastT/400),0,1);
+  pill(90,70,300,46,"#713f12");
+  ctx.fillStyle="#fde047"; ctx.font=font(800,16); ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText("\uD83C\uDFC6 "+Game.achToast+"!",240,93);
+  ctx.restore();
 }
 
 /* ---------- title ---------- */
@@ -1505,24 +2430,63 @@ function drawTitleDemo(){
     const x=((Game.time*(0.05+i*0.02)+i*260)%760)-140;
     drawBus({x,color:i%3,bay:i,state:"parked",aboard:0,cap:6,timer:1,maxTimer:1,wob:0,denyT:0,celeb:0,demo:true});
   }
+  // v9: ambient strolling passengers behind the title
+  for(let i=0;i<4;i++){
+    const wx=((Game.time*(0.045+i*0.012)+i*190)%700)-110;
+    drawPassenger({x:wx,y:662-i*7,color:(i+1)%5,skin:SKIN[i%SKIN.length],hair:i%3,
+      hcol:HAIRCOL[i%HAIRCOL.length],st:"q",wob:i*1.7,denyT:0,tapT:0,birthT:0,hopT:0});
+  }
 }
 function drawTitle(){
   dim();
   // logo (cached, painted once at DPR)
   const tl=titleLogo();
   ctx.drawImage(tl.img,0,150,tl.w,tl.h);
+  // animated shine sweep across the logo
+  const sw=(Game.time%3600)/3600, sa=Math.sin(Math.PI*sw);
+  if(sa>0.01){
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0,150,480,140); ctx.clip();
+    ctx.globalAlpha=0.35*sa;
+    ctx.translate(-140+sw*760,220); ctx.rotate(-0.32);
+    const sg=ctx.createLinearGradient(-45,0,45,0);
+    sg.addColorStop(0,"rgba(255,255,255,0)"); sg.addColorStop(0.5,"rgba(255,255,255,0.9)"); sg.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=sg; ctx.fillRect(-45,-170,90,340);
+    ctx.restore();
+  }
   // mini passengers row (real chibi renders)
   [0,1,2,3,4].forEach((c,i)=>{
     drawPassenger({x:150+i*46,y:332,color:c,skin:SKIN[i%SKIN.length],st:"q",wob:i*1.3,denyT:0,tapT:0});
   });
-  Game.uiPlay=button(140,392,200,64,"PLAY",null,"#22c55e");
-  pill(140,472,200,44,"rgba(255,255,255,0.10)");
+  Game.uiContinue=null; Game.uiNew=null; Game.uiPlay=null; Game.uiDaily=null;
+  const _dmv15=dailyModifier();   // v15: show today's twist on the button
+  const dbest=Game.dailyBest>0?("BEST $"+Game.dailyBest):("5 levels • "+_dmv15.name);
+  let infoY;
+  if(Game.saveLevel>1){
+    // v10: resume in-progress run (portal save = current progress, not just metadata)
+    Game.uiContinue=button(140,366,200,56,"CONTINUE LV "+Game.saveLevel,null,"#22c55e");
+    Game.uiDaily=button(140,430,200,44,"DAILY",dbest,"#0ea5e9");
+    Game.uiNew=button(140,482,200,40,"NEW GAME",null,"#475569");
+    pill(140,530,200,44,"rgba(255,255,255,0.10)");
+    infoY=553;
+  }else{
+    Game.uiPlay=button(140,366,200,64,"PLAY",null,"#22c55e");
+    Game.uiDaily=button(140,438,200,48,"DAILY",dbest,"#0ea5e9");
+    pill(140,494,200,44,"rgba(255,255,255,0.10)");
+    infoY=517;
+  }
   ctx.fillStyle="#fff"; ctx.font=font(700,16);
-  ctx.fillText("BEST LV "+Game.best+"   •   $"+Game.coins,240,495);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText("BEST LV "+Game.best+"   •   $"+Game.coins,240,infoY);
   ctx.fillStyle="#cbd5e1"; ctx.font=font(500,15);
-  ctx.fillText("Tap passengers to board matching buses.",240,552);
-  ctx.fillText("Don't let the terminal jam!",240,576);
-  Game.uiMute=circleBtn(448,32,20,Game.muted?"✕":"♪","#475569");
+  ctx.fillText("Tap passengers to board matching buses.",240,infoY+57);
+  ctx.fillText("Don't let the terminal jam!",240,infoY+81);
+  // v13: persistent features row — v15: 4 buttons incl. RECORDS
+  Game.uiStats=button(8,648,110,52,"STATS",null,"#0f766e");
+  Game.uiMedals=button(126,648,110,52,"MEDALS",null,"#b45309");
+  Game.uiGarage=button(244,648,110,52,"GARAGE",null,"#7c3aed");
+  Game.uiRecords=button(362,648,110,52,"RECORDS",null,"#1d4ed8");
+  Game.uiMute=circleBtn(448,32,23,Game.muted?"✕":"♪","#475569");   // v15: r20->23
 }
 
 /* ================= INPUT ================= */
@@ -1541,6 +2505,13 @@ if(canvas&&canvas.addEventListener){
 if(typeof document!=="undefined"&&document.addEventListener){
   document.addEventListener("touchmove",e=>{ try{e.preventDefault();}catch(_){}} ,{passive:false});
   document.addEventListener("dblclick",e=>{ try{e.preventDefault();}catch(_){}} );
+  // v11: anti-scroll universal — espacio/flechas/wheel nunca mueven la página en portales
+  document.addEventListener("keydown",e=>{
+    if([" ","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","PageUp","PageDown","Home","End"].includes(e.key)){
+      try{e.preventDefault();}catch(_){}
+    }
+  });
+  document.addEventListener("wheel",e=>{ try{e.preventDefault();}catch(_){} },{passive:false});
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden) Game.autoPause(true);
     else { try{ Sfx.onShow(); }catch(e){} }   // re-align music scheduler (no catch-up burst)
@@ -1556,14 +2527,21 @@ function frame(t){
     let dt=Math.min(50,(t-lastT)||16); lastT=t;
     if(Game.slowmo>0){ Game.slowmo=Math.max(0,Game.slowmo-dt); dt*=0.35; }  // hit slow-mo: brief juice, logic stays consistent
     Game.tick(dt); draw(); frames++;
-    if(frames===2){ try{ Portal.gameReady(); }catch(e){} }
+    if(frames===2){ try{ Portal.gameReady(); }catch(e){} try{ if(Portal.loadingStop) Portal.loadingStop(); }catch(e){} }
   }catch(e){ /* never die on a render error */ }
 }
-Promise.all([Store.get("coins"),Store.get("best"),Store.get("muted"),Store.get("seenTut")]).then(v=>{
+Promise.all([Store.get("coins"),Store.get("best"),Store.get("muted"),Store.get("seenTut"),Store.get("saveLevel"),Store.get("dailybest_"+dailySeed()),Stats.load(),Ach.load(),Store.get("skin"),Store.get("skins"),Store.get("seenKind_rain"),Store.get("seenKind_snow"),Store.get("seenKind_rush")]).then(v=>{
   Game.coins=parseInt(v[0]||"0",10)||0;
   Game.best=parseInt(v[1]||"0",10)||0;
   Game.muted=v[2]==="1"; Sfx.muted=Game.muted;
   Game.seenTut=v[3]==="1";
+  Game.saveLevel=parseInt(v[4]||"0",10)||0;   // v10: resume in-progress level from title
+  Game.dailyBest=parseInt(v[5]||"0",10)||0;   // v12: today's daily best
+  Game.skin=parseInt(v[8]||"0",10)||0;        // v13: garage
+  try{ Game.skinsOwned=String(v[9]||"0").split(",").map(x=>parseInt(x,10)||0); }catch(e){ Game.skinsOwned=[0]; }
+  if(Game.skinsOwned.indexOf(0)<0) Game.skinsOwned.unshift(0);
+  if(!SKINS[Game.skin]) Game.skin=0;
+  Game.seenKind={rain:v[10]==="1",snow:v[11]==="1",rush:v[12]==="1"};   // v15: weather onboarding
   try{ Portal.boot(); }catch(e){}
   // screenshot helper: ?shot=play skips the title and starts level 1 (no tutorial overlay)
   try{ if(new URLSearchParams(location.search).get("shot")==="play"){ Game.seenTut=true; Game.newGame(); } }catch(e){}
